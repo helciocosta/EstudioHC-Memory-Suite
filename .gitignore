@@ -1,0 +1,23 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+mcp_env/
+
+# Databases
+*.db
+*.sqlite
+
+# Logs
+*.log
+
+# SillyTavern
+chats/
+public/chats/
+data/default-user/chats/

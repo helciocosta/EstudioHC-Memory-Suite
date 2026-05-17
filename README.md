@@ -1,62 +1,102 @@
-# EstudioHC Context & Memory Hub
+# 🎙️ EstudioHC Memory Suite & Hub Central
 
-Este projeto é um ecossistema de memória persistente para agentes de IA (Gemini, Vibe, Antigravity, SillyTavern). Ele permite que você tenha um histórico unificado de tarefas e contextos que te segue entre diferentes terminais e computadores.
+Bem-vindo ao **EstudioHC Memory Suite**, a infraestrutura de contexto e persistência de memória centralizada projetada especificamente para o ecossistema de agentes de IA (**Gemini, Antigravity, Hermes Agent, Vibe**) de **Helcio O. Costa**.
 
-## Estrutura do Projeto
+Este ecossistema unifica a memória de trabalho, tarefas pendentes, notas de diário e agenda de compromissos físicas, sincronizando-as de forma inteligente entre múltiplas estações de trabalho locais (`helcio-x99-b`, `amd-estudio-c2`, `estudio-x79`) e o servidor central de nuvem **Contabo** por meio de uma VPN segura **Tailscale**.
 
-- **Memory Hub (FastAPI + SQLite):** Servidor central que armazena fatos e tarefas.
-- **Agent Orchestrator:** Script que monitora atividades do PC e chats do SillyTavern.
-- **Dashboard CLI:** Interface interativa para escolher tarefas ao abrir o terminal.
-- **MCP Bridge:** Integração com agentes via Protocolo MCP (STDIO).
+---
 
-## Instalação
+## 🏗️ Arquitetura Unificada do Sistema
 
-### 1. Servidor de Memória (MCP Host)
+O repositório está organizado em subpastas focadas e com responsabilidades bem definidas:
+
+```
+EstudioHC-Memory-Suite/
+├── dashboard/               # Interface Web Premium e Backend Local
+│   ├── server.py            # Servidor HTTP local (porta 8585)
+│   ├── index.html           # Dashboard HTML5/JS rico com glassmorphism
+│   └── agenda.json          # Cache local de compromissos da estação
+├── server/                  # Cérebro de Persistência MCP Central
+│   ├── mcp_server.py        # API FastAPI HTTP (porta 5050 no Contabo)
+│   ├── mcp_stdio_server.py  # Conector STDIO nativo para agentes locais
+│   └── estudiohc_memory.db  # Banco de dados SQLite persistente
+└── cli/                     # Utilitários de Terminal
+    └── estudio              # Comando de boot e monitoramento global
+```
+
+---
+
+## 🚦 Componentes do Stack
+
+### 1. O Cérebro Central: MCP Memory Suite (`/server`)
+Hospedado de forma permanente no servidor Contabo (`100.64.117.78`). 
+- **Tecnologia:** FastAPI + SQLite (`estudiohc_memory.db`).
+- **Porta:** `5050` (MCP central) e futuramente `8586` (Central API de sincronização avançada).
+- **Serviço Systemd:** `estudiohc-memory.service` gerenciado remotamente.
+- **Função:** Fornecer armazenamento permanente de fatos, memórias e tarefas para os agentes de IA via endpoints `/remember` e `/recall`.
+
+### 2. O Painel Web Interativo (`/dashboard`)
+Roda localmente em cada estação de trabalho para fornecer uma experiência visual premium.
+- **Tecnologia:** Servidor HTTP Python nativo + HTML5 / CSS Vanilla moderno.
+- **Porta:** `8585` (Acesso via `http://localhost:8585`).
+- **Serviço Systemd:** `estudiohc-hub.service` local.
+- **Destaques:** 
+  * Integração nativa com o **Hermes Agent** via OpenRouter com fallback automático e silencioso para o **KoboldCpp local** (porta `11434` / Qwen3-1.7B) se a máquina estiver sem internet ou com rate-limit.
+  * Diário diário de trabalho automatizado em markdown sincronizado com a home central.
+
+### 3. A Central de Comando CLI (`/cli`)
+O utilitário `/usr/local/bin/estudio` é a interface de terminal que atua como ponto de partida diário.
+- **Uso:** Basta digitar `estudio` no terminal.
+- **Exibe:** Status de saúde dos daemons locais, latência da rede Tailscale para o Contabo, lista de tarefas pendentes no servidor e a próxima ação recomendada.
+
+---
+
+## 🚀 Instalação e Inicialização Rápida
+
+### Passo 1 — Executar o Servidor de Memória (Remoto ou Local)
+Para subir a API FastAPI de persistência de memória:
 ```bash
-cd GeminiMCPHost
+cd server
 python3 -m venv mcp_env
 source mcp_env/bin/activate
 pip install -r requirements.txt
 python3 -m uvicorn mcp_server:app --host 0.0.0.0 --port 5050
 ```
 
-### 2. Orquestrador e Dashboard
+### Passo 2 — Subir o Painel Visual Local
+Para expor a porta local `8585` e acessar os diários e o chat de IA:
 ```bash
-cd LocalAI
-pip install psutil requests
-# Adicione ao seu .bashrc para o Dashboard iniciar com o terminal:
-echo "python3 $(pwd)/dashboard.py" >> ~/.bashrc
+cd dashboard
+python3 server.py
 ```
 
-## Sincronização entre PCs
+### Passo 3 — Instalar o Comando CLI `estudio`
+Para instalar globalmente a central de comando:
+```bash
+sudo cp cli/estudio /usr/local/bin/estudio
+sudo chmod +x /usr/local/bin/estudio
+```
 
-Para que sua memória seja a mesma em todos os computadores, você tem duas opções:
+---
 
-### Opção A: Sincronização de Arquivos (Recomendado)
-Use o **Syncthing** (ou Dropbox/Google Drive) para sincronizar as seguintes pastas/arquivos entre seus PCs:
-1. `~/Apps/GeminiMCPHost/cgdoc_memory.db` (O banco de dados central)
-2. `~/.gemini/GEMINI.md` (As instruções e contexto atual do agente)
+## 🤖 Integração com Agentes de IA
 
-Isso garantirá que, ao mudar de PC, o banco de dados e o contexto do Gemini estejam idênticos.
-
-### Opção B: Servidor Centralizado
-1. Instale o **Memory Hub** em um servidor Linux (ou em um dos PCs que fique sempre ligado).
-2. Nos outros PCs, aponte a variável `MEMO_HUB_URL` no `agent_orchestrator.py` e `dashboard.py` para o IP desse servidor central (ex: `http://192.168.1.50:5050`).
-3. Use o **Tailscale** para acessar o servidor de forma segura fora de casa.
-
-## Integração com Agentes
-
-### Gemini CLI
-Adicione o servidor ao seu `~/.gemini/settings.json`:
+### No Gemini CLI / VS Code IDE Companion
+Adicione a suíte de persistência como servidor MCP no arquivo `~/.gemini/settings.json`:
 ```json
-"estudiohc-memory": {
-  "command": "/caminho/para/python3",
-  "args": ["/caminho/para/mcp_stdio_server.py"]
+"mcpServers": {
+  "estudiohc-memory": {
+    "command": "python3",
+    "args": ["/home/helcio/Apps/EstudioHC-Memory-Suite/server/mcp_stdio_server.py"]
+  }
 }
 ```
 
-### Vibe
-Adicione ao seu `~/.vibe/config.toml`:
+### No Vibe CLI
+Configure o conector STDIO no arquivo de configurações `~/.vibe/config.toml`:
 ```toml
-mcp_servers = ["python3 /caminho/para/mcp_stdio_server.py"]
+mcp_servers = ["python3 /home/helcio/Apps/EstudioHC-Memory-Suite/server/mcp_stdio_server.py"]
 ```
+
+---
+*Documentação atualizada e auditada por Antigravity em 2026-05-17.*

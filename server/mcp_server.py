@@ -62,6 +62,10 @@ class ChatPayload(BaseModel):
     mensagem: str
     contexto: Optional[str] = ""
 
+class ResumoPayload(BaseModel):
+    resumo: str
+    agente: str
+
 # Inicialização de Banco de Dados com novas tabelas
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -124,6 +128,14 @@ def init_db():
                         ip_tailscale TEXT,
                         ultimo_ping TEXT,
                         status TEXT
+                    )''')
+                    
+    # 7. Tabela de Cache de Resumos de Diários
+    cursor.execute('''CREATE TABLE IF NOT EXISTS resumos_diarios (
+                        data TEXT PRIMARY KEY,
+                        resumo TEXT,
+                        agente TEXT,
+                        timestamp TEXT
                     )''')
     conn.commit()
     conn.close()
@@ -241,6 +253,13 @@ async def get_diario_api(data: str):
         cursor = conn.cursor()
         cursor.execute("SELECT timestamp, estacao, texto FROM notas WHERE SUBSTR(timestamp, 1, 10) = ? ORDER BY timestamp ASC", (data,))
         rows = cursor.fetchall()
+        
+        # Busca o resumo cacheado se houver
+        cursor.execute("SELECT resumo, agente FROM resumos_diarios WHERE data = ?", (data,))
+        row_res = cursor.fetchone()
+        resumo = row_res[0] if row_res else None
+        agente = row_res[1] if row_res else None
+        
         conn.close()
         
         conteudo = f"# Diário — {data}\n\n"
@@ -251,7 +270,22 @@ async def get_diario_api(data: str):
                 hora = timestamp[11:16] if len(timestamp) >= 16 else "00:00"
                 conteudo += f"## {hora} ({estacao})\n{texto}\n\n"
                 
-        return {"data": data, "conteudo": conteudo}
+        return {"data": data, "conteudo": conteudo, "resumo": resumo, "agente": agente}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/diario/{data}/resumo")
+async def save_diario_resumo(data: str, payload: ResumoPayload):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR REPLACE INTO resumos_diarios (data, resumo, agente, timestamp) VALUES (?, ?, ?, ?)",
+            (data, payload.resumo, payload.agente, datetime.now().isoformat())
+        )
+        conn.commit()
+        conn.close()
+        return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -378,17 +378,35 @@ async function abrirDiario(data, el) {
   diarioAtualConteudo = d.conteudo;
   $('btn-resumir').style.display = 'inline-flex';
   
-  // Executa o resumo de IA de forma automática
-  resumirDiario();
+  // Se já tiver resumo no cache do banco, exibe de forma instantânea
+  if (d.resumo) {
+    $('ai-resumo').innerHTML = (d.agente === 'koboldcpp' ? '<small style="color:var(--yellow)">⚡ [GPU Local] (Cache)</small><br>' : '<small style="color:var(--accent2)">☁️ [Hermes Cloud] (Cache)</small><br>') + d.resumo.replace(/\n/g, '<br>');
+    $('ai-resumo').classList.add('visible');
+  } else {
+    // Caso contrário, executa e salva automaticamente
+    resumirDiario(data);
+  }
 }
 
-async function resumirDiario() {
+async function resumirDiario(dataParam) {
+  const data = dataParam || $('diario-titulo').textContent.replace('📄 ', '').trim();
   $('ai-resumo').textContent = '✨ Gerando resumo com IA...';
   $('ai-resumo').classList.add('visible');
   const trecho = diarioAtualConteudo.slice(0, 1500);
   const d = await chamarIA(`Faça um resumo conciso e organizado deste diário de trabalho:\n\n${trecho}`);
   if (d.resposta) {
     $('ai-resumo').innerHTML = (d.agente === 'koboldcpp' ? '<small style="color:var(--yellow)">⚡ [GPU Local] </small><br>' : '<small style="color:var(--accent2)">☁️ [Hermes Cloud] </small><br>') + d.resposta.replace(/\n/g, '<br>');
+    
+    // Salva o resumo recém-gerado no cache central
+    try {
+      await fetch(`${API}/diario/${data}/resumo`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({resumo: d.resposta, agente: d.agente})
+      });
+    } catch(err) {
+      console.log("Erro ao salvar cache de resumo:", err);
+    }
   } else {
     $('ai-resumo').textContent = '❌ ' + d.erro;
   }

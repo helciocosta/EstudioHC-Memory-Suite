@@ -54,6 +54,7 @@ class ProjetoEntry(BaseModel):
     status: Optional[str] = "ativo"
     tags: Optional[str] = ""
     readme_preview: Optional[str] = ""
+    estacao: Optional[str] = "central"
 
 class ProjetosSyncPayload(BaseModel):
     projetos: List[ProjetoEntry]
@@ -93,16 +94,29 @@ def init_db():
                         timestamp TEXT
                     )''')
                     
-    # 3. Tabela de Projetos
+    # 3. Tabela de Projetos (com migração de estacao e UNIQUE composto)
+    cursor.execute("PRAGMA table_info(projetos)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if 'estacao' not in columns:
+        cursor.execute("DROP TABLE IF EXISTS projetos")
+        
     cursor.execute('''CREATE TABLE IF NOT EXISTS projetos (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        nome TEXT UNIQUE,
+                        nome TEXT,
                         local_caminho TEXT,
                         status TEXT,
                         tags TEXT,
                         readme_preview TEXT,
-                        ultima_atualizacao TEXT
+                        estacao TEXT DEFAULT 'central',
+                        ultima_atualizacao TEXT,
+                        UNIQUE(nome, estacao)
                     )''')
+                    
+    # Insere o projeto do próprio servidor por padrão caso não exista
+    cursor.execute("""
+        INSERT OR IGNORE INTO projetos (nome, local_caminho, status, tags, readme_preview, estacao, ultima_atualizacao)
+        VALUES ('EstudioHC-Memory-Suite', '/home/deploy/Apps/EstudioHC-Memory-Suite', 'ativo', 'core,central', 'Contexto, memória MCP, API central e Dashboard', 'vmi2968998', ?)
+    """, (datetime.now().isoformat(),))
                     
     # 4. Tabela de Tarefas
     cursor.execute('''CREATE TABLE IF NOT EXISTS tarefas (
@@ -310,7 +324,7 @@ async def get_projetos_api():
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute("SELECT nome, local_caminho as local, readme_preview as preview, status, tags FROM projetos ORDER BY nome ASC")
+        cursor.execute("SELECT nome, local_caminho as local, readme_preview as preview, status, tags, estacao FROM projetos ORDER BY nome ASC")
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
@@ -324,13 +338,15 @@ async def sync_projetos_api(payload: ProjetosSyncPayload):
         cursor = conn.cursor()
         for p in payload.projetos:
             cursor.execute("""
-                INSERT INTO projetos (nome, local_caminho, status, tags, readme_preview, ultima_atualizacao)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(nome) DO UPDATE SET
+                INSERT INTO projetos (nome, local_caminho, status, tags, readme_preview, estacao, ultima_atualizacao)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(nome, estacao) DO UPDATE SET
                     local_caminho = excluded.local_caminho,
                     readme_preview = excluded.readme_preview,
+                    status = excluded.status,
+                    tags = excluded.tags,
                     ultima_atualizacao = excluded.ultima_atualizacao
-            """, (p.nome, p.local_caminho, p.status, p.tags, p.readme_preview, datetime.now().isoformat()))
+            """, (p.nome, p.local_caminho, p.status, p.tags, p.readme_preview, p.estacao, datetime.now().isoformat()))
         conn.commit()
         conn.close()
         return {"ok": True, "count": len(payload.projetos)}

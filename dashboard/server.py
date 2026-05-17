@@ -69,25 +69,84 @@ def adicionar_nota(texto):
 
 
 def get_projetos():
-    """Lê e parseia o PROJETOS_STATUS.md."""
-    if not os.path.exists(PROJETOS_FILE):
-        return []
-    with open(PROJETOS_FILE, "r", encoding="utf-8") as f:
-        conteudo = f.read()
-    projetos = []
-    blocos = conteudo.split("## 🛠")
-    for bloco in blocos[1:]:
-        linhas = bloco.strip().split("\n")
-        nome = linhas[0].strip()
-        local = ""
-        for l in linhas:
-            if "**Local:**" in l:
-                local = l.replace("- **Local:**", "").strip().strip("`")
-        preview = " ".join(
-            l for l in linhas[1:6] if l.strip() and "Local:" not in l
-        )[:200]
-        projetos.append({"nome": nome, "local": local, "preview": preview})
-    return projetos
+    """Lê e parseia o PROJETOS_STATUS.md e sincroniza com o servidor central."""
+    import socket
+    estacao_local = socket.gethostname()
+    
+    # 1. Parse do arquivo local
+    projetos_locais = []
+    if os.path.exists(PROJETOS_FILE):
+        try:
+            with open(PROJETOS_FILE, "r", encoding="utf-8") as f:
+                conteudo = f.read()
+            blocos = conteudo.split("## 🛠")
+            for bloco in blocos[1:]:
+                linhas = bloco.strip().split("\n")
+                nome = linhas[0].strip()
+                local = ""
+                for l in linhas:
+                    if "**Local:**" in l:
+                        local = l.replace("- **Local:**", "").strip().strip("`")
+                preview = " ".join(
+                    l for l in linhas[1:6] if l.strip() and "Local:" not in l
+                )[:200]
+                projetos_locais.append({
+                    "nome": nome,
+                    "local_caminho": local,
+                    "status": "ativo",
+                    "tags": "",
+                    "readme_preview": preview,
+                    "estacao": estacao_local
+                })
+        except Exception as e:
+            print("Erro ao ler PROJETOS_STATUS.md local:", e)
+
+    # 2. Sincroniza com a API Central (Contabo)
+    CENTRAL_URL = "http://100.64.117.78:8585"
+    if projetos_locais:
+        try:
+            payload = {"projetos": projetos_locais}
+            req = urllib.request.Request(
+                f"{CENTRAL_URL}/api/projetos/sync",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            # Timeout curto para evitar lentidão
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                pass
+        except Exception as e:
+            print("Servidor central offline para sincronização:", e)
+
+    # 3. Busca lista consolidada de todos os projetos (PC + Servidor + outras estações)
+    try:
+        req = urllib.request.Request(
+            f"{CENTRAL_URL}/api/projetos",
+            method="GET"
+        )
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            lista_central = json.loads(resp.read().decode("utf-8"))
+            projetos_normalizados = []
+            for p in lista_central:
+                projetos_normalizados.append({
+                    "nome": p.get("nome"),
+                    "local": p.get("local") or p.get("local_caminho") or "",
+                    "preview": p.get("preview") or p.get("readme_preview") or "",
+                    "estacao": p.get("estacao", "desconhecida")
+                })
+            return projetos_normalizados
+    except Exception as e:
+        print("Erro ao buscar projetos do servidor central, usando locais:", e)
+        # Fallback para locais apenas
+        return [
+            {
+                "nome": p["nome"],
+                "local": p["local_caminho"],
+                "preview": p["readme_preview"],
+                "estacao": p["estacao"]
+            }
+            for p in projetos_locais
+        ]
 
 
 def get_agenda():

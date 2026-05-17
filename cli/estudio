@@ -5,8 +5,7 @@
 # ║  Instalar: sudo cp estudio /usr/local/bin/estudio           ║
 # ╚══════════════════════════════════════════════════════════════╝
 
-SERVIDOR="deploy@100.64.117.78"
-STATUS_REMOTO="/home/deploy/STATUS_ESTUDIOHC.md"
+SERVIDOR_API="http://100.64.117.78:8585/api"
 ESTACAO=$(hostname)
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M')
 
@@ -42,7 +41,7 @@ check_service() {
 check_port() {
     local nome="$1"
     local porta="$2"
-    if curl -s --max-time 2 "http://localhost:${porta}" > /dev/null 2>&1 || \
+    if curl -s --max-time 1 "http://localhost:${porta}" > /dev/null 2>&1 || \
        ss -tlnp 2>/dev/null | grep -q ":${porta}"; then
         echo -e "  ${VERDE}●${RESET} ${nome} (porta ${porta})"
     else
@@ -50,46 +49,32 @@ check_port() {
     fi
 }
 
-check_service "EstudioHC Hub" "estudiohc-hub"
 check_service "KoboldCpp (IA Local)" "koboldcpp"
-check_port    "Hub Web" "8585"
+check_port    "KoboldCpp Web" "11434"
 
 echo ""
 
 # ── 2. Verificar conexão com SERVIDOR CENTRAL ───────────────────
 echo -e "${NEGRITO}── Servidor Central (Contabo) ───────────────────────────${RESET}"
 
-PING_OK=false
-if ping -c 1 -W 2 100.64.117.78 > /dev/null 2>&1; then
-    PING_OK=true
-    echo -e "  ${VERDE}●${RESET} Servidor Contabo (100.64.117.78) — acessível via Tailscale"
-else
-    echo -e "  ${VERMELHO}○${RESET} Servidor Contabo — INACESSÍVEL (Tailscale offline?)"
-fi
+# Faz uma única chamada HTTP rápida com timeout curto (1.5 segundos)
+CENTRAL_JSON=$(curl -s --max-time 1.5 "${SERVIDOR_API}/status" 2>/dev/null)
 
-# Verificar serviço central no servidor
-if [ "$PING_OK" = true ]; then
-    CENTRAL_STATUS=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$SERVIDOR" \
-        "systemctl is-active estudiohc-central 2>/dev/null || echo 'nao-instalado'" 2>/dev/null)
-    case "$CENTRAL_STATUS" in
-        active)
-            echo -e "  ${VERDE}●${RESET} EstudioHC Central API — online"
-            ;;
-        nao-instalado)
-            echo -e "  ${AMARELO}○${RESET} EstudioHC Central API — ${AMARELO}ainda não instalada (FASE 1 pendente)${RESET}"
-            ;;
-        *)
-            echo -e "  ${VERMELHO}○${RESET} EstudioHC Central API — parada (reiniciar?)"
-            ;;
-    esac
-
-    MCP_STATUS=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$SERVIDOR" \
-        "systemctl is-active estudiohc-memory 2>/dev/null || curl -s --max-time 2 http://localhost:5050/ > /dev/null 2>&1 && echo 'active' || echo 'parado'" 2>/dev/null)
-    if echo "$MCP_STATUS" | grep -q "active"; then
-        echo -e "  ${VERDE}●${RESET} MCP Memory Suite — online (porta 5050)"
+if [ -n "$CENTRAL_JSON" ]; then
+    echo -e "  ${VERDE}●${RESET} Servidor Contabo (100.64.117.78) — ONLINE via Tailscale"
+    
+    # Extrai o status da Central e do Hermes da resposta JSON usando python ou bash regex
+    # para evitar dependência externa de 'jq'
+    HERMES_STATUS=$(echo "$CENTRAL_JSON" | python3 -c "import sys, json; print(json.load(sys.stdin).get('hermes', False))" 2>/dev/null)
+    
+    echo -e "  ${VERDE}●${RESET} EstudioHC Central API — online (porta 8585)"
+    if [ "$HERMES_STATUS" = "True" ]; then
+        echo -e "  ${VERDE}●${RESET} Hermes Agent Central — online (OpenRouter)"
     else
-        echo -e "  ${VERMELHO}○${RESET} MCP Memory Suite — parado"
+        echo -e "  ${AMARELO}○${RESET} Hermes Agent Central — ${AMARELO}desativado ou sem API Key${RESET}"
     fi
+else
+    echo -e "  ${VERMELHO}○${RESET} Servidor Contabo — INACESSÍVEL (Tailscale offline ou API inativa?)"
 fi
 
 echo ""
@@ -97,20 +82,30 @@ echo ""
 # ── 3. Tarefas pendentes do servidor ────────────────────────────
 echo -e "${NEGRITO}── Próximas Tarefas (do Servidor) ──────────────────────${RESET}"
 
-if [ "$PING_OK" = true ]; then
-    ssh -o ConnectTimeout=5 -o BatchMode=yes "$SERVIDOR" \
-        "grep '\- \[ \]' /home/deploy/STATUS_ESTUDIOHC.md 2>/dev/null | head -8" 2>/dev/null \
-        | sed 's/- \[ \]/  ○/g' | while IFS= read -r linha; do
-            echo -e "  ${AMARELO}○${RESET}${linha#  ○}"
-        done
+# Faz outra chamada HTTP rápida para buscar o status em markdown de forma transparente e instantânea
+STATUS_MD_JSON=$(curl -s --max-time 1.5 "${SERVIDOR_API}/status_md" 2>/dev/null)
+CONTEUDO_MD=$(echo "$STATUS_MD_JSON" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('conteudo', d.get('erro', '')))" 2>/dev/null)
+
+if [ -n "$CONTEUDO_MD" ] && [[ ! "$CONTEUDO_MD" =~ "não encontrado" ]]; then
+    # Cache local do status
+    mkdir -p "$HOME/.estudio_cache"
+    echo "$CONTEUDO_MD" > "$HOME/.estudio_cache/STATUS.md"
     
-    TOTAL=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$SERVIDOR" \
-        "grep -c '\- \[ \]' /home/deploy/STATUS_ESTUDIOHC.md 2>/dev/null" 2>/dev/null || echo "?")
+    # Processa as tarefas pendentes do arquivo markdown usando grep/sed tradicional do Linux
+    echo "$CONTEUDO_MD" | grep '\- \[ \]' | head -8 | sed 's/- \[ \]/  ○/g' | while IFS= read -r linha; do
+        echo -e "  ${AMARELO}○${RESET}${linha#  ○}"
+    done
+    
+    TOTAL=$(echo "$CONTEUDO_MD" | grep -c '\- \[ \]')
     echo -e "\n  ${CIANO}Total de tarefas pendentes: ${NEGRITO}${TOTAL}${RESET}"
 else
     echo -e "  ${AMARELO}⚠ Servidor inacessível — lendo cache local${RESET}"
     if [ -f "$HOME/.estudio_cache/STATUS.md" ]; then
-        grep '\- \[ \]' "$HOME/.estudio_cache/STATUS.md" | head -8 | sed 's/- \[ \]/  ○/g'
+        grep '\- \[ \]' "$HOME/.estudio_cache/STATUS.md" | head -8 | sed 's/- \[ \]/  ○/g' | while IFS= read -r linha; do
+            echo -e "  ${AMARELO}○${RESET}${linha#  ○}"
+        done
+        TOTAL=$(grep -c '\- \[ \]' "$HOME/.estudio_cache/STATUS.md")
+        echo -e "\n  ${CIANO}Total de tarefas pendentes: ${NEGRITO}${TOTAL}${RESET}"
     else
         echo "  Sem cache local disponível."
     fi
@@ -120,26 +115,37 @@ echo ""
 
 # ── 4. Próximo passo recomendado ─────────────────────────────────
 echo -e "${NEGRITO}── Próximo Passo ────────────────────────────────────────${RESET}"
-if [ "$PING_OK" = true ]; then
-    PROXIMO=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$SERVIDOR" \
-        "grep '\- \[ \]' /home/deploy/STATUS_ESTUDIOHC.md 2>/dev/null | head -1" 2>/dev/null \
-        | sed 's/.*\- \[ \] //')
+if [ -n "$CONTEUDO_MD" ] && [[ ! "$CONTEUDO_MD" =~ "não encontrado" ]]; then
+    PROXIMO=$(echo "$CONTEUDO_MD" | grep '\- \[ \]' | head -1 | sed 's/.*\- \[ \] //')
     if [ -n "$PROXIMO" ]; then
         echo -e "  ${VERDE}▶${RESET} ${PROXIMO}"
+    fi
+else
+    if [ -f "$HOME/.estudio_cache/STATUS.md" ]; then
+        PROXIMO=$(grep '\- \[ \]' "$HOME/.estudio_cache/STATUS.md" | head -1 | sed 's/.*\- \[ \] //')
+        if [ -n "$PROXIMO" ]; then
+            echo -e "  ${VERDE}▶${RESET} ${PROXIMO}"
+        fi
     fi
 fi
 
 echo ""
+echo -e "${AZUL}  Para acessar o Painel Web Central:${RESET}"
+echo -e "  ${NEGRITO}http://100.64.117.78:8585${RESET}"
 echo -e "${AZUL}  Para ver o plano completo:${RESET}"
-echo -e "  ${NEGRITO}ssh deploy@100.64.117.78 \"cat /home/deploy/STATUS_ESTUDIOHC.md\"${RESET}"
 echo -e "  ${NEGRITO}estudio --plano${RESET}"
 echo ""
 echo -e "${NEGRITO}${AZUL}══════════════════════════════════════════════════════${RESET}"
 echo ""
 
 # ── Modo --plano ────────────────────────────────────────────────
-if [ "${1}" = "--plano" ] && [ "$PING_OK" = true ]; then
+if [ "${1}" = "--plano" ]; then
     echo ""
-    ssh -o ConnectTimeout=5 -o BatchMode=yes "$SERVIDOR" \
-        "cat /home/deploy/STATUS_ESTUDIOHC.md" 2>/dev/null
+    if [ -n "$CONTEUDO_MD" ] && [[ ! "$CONTEUDO_MD" =~ "não encontrado" ]]; then
+        echo "$CONTEUDO_MD"
+    elif [ -f "$HOME/.estudio_cache/STATUS.md" ]; then
+        cat "$HOME/.estudio_cache/STATUS.md"
+    else
+        echo "Nenhum plano disponível."
+    fi
 fi

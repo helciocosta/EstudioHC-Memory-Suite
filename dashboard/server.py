@@ -198,17 +198,31 @@ def gerar_relatorio_local(nome):
                     pass
 
         import subprocess
+        # Verifica se o diretório do projeto é a raiz de um repositório git legítimo
+        e_repo_git = False
         try:
-            res = subprocess.run(["git", "status", "--porcelain"], cwd=local_path, capture_output=True, text=True, timeout=5)
-            git_status = res.stdout.strip()
+            res = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=local_path, capture_output=True, text=True, timeout=3)
+            # Normaliza os caminhos para comparação segura
+            if res.returncode == 0 and os.path.realpath(res.stdout.strip()) == os.path.realpath(local_path):
+                e_repo_git = True
         except Exception:
             pass
 
-        try:
-            res = subprocess.run(["git", "log", "-n", "5", "--oneline"], cwd=local_path, capture_output=True, text=True, timeout=5)
-            git_log = res.stdout.strip()
-        except Exception:
-            pass
+        if e_repo_git:
+            try:
+                res = subprocess.run(["git", "status", "--porcelain"], cwd=local_path, capture_output=True, text=True, timeout=5)
+                git_status = res.stdout.strip()
+            except Exception:
+                pass
+
+            try:
+                res = subprocess.run(["git", "log", "-n", "5", "--oneline"], cwd=local_path, capture_output=True, text=True, timeout=5)
+                git_log = res.stdout.strip()
+            except Exception:
+                pass
+        else:
+            git_status = "Este diretório não é a raiz de um repositório Git isolado."
+            git_log = "Sem histórico (não é repositório Git)."
 
     CENTRAL_URL = "http://100.64.117.78:8585"
     payload = {

@@ -490,10 +490,27 @@ Você DEVE retornar sua resposta ESTRETAMENTE em formato JSON com a seguinte est
             "relatorio": relatorio_md
         }
     except Exception as e:
+        rel_erro = f"""# ⚠️ Falha na Geração do Relatório por IA
+
+> **Aviso do Sistema:** Ocorreu um erro técnico inesperado ao acionar a inteligência artificial central (**Hermes**) no servidor central Contabo.
+
+---
+
+### 📊 Estado de Fallback Técnico
+
+Para garantir que você não fique sem informações sobre o seu projeto, abaixo estão listados os detalhes técnicos brutos do erro para auditoria e depuração rápida.
+
+#### 🔍 Diagnóstico do Erro:
+```text
+{e}
+```
+
+---
+*💡 **Dica:** Certifique-se de que a internet está funcional no servidor Contabo e que a chave de API do OpenRouter não esteja esgotada. Você pode tentar gerar novamente o relatório a qualquer momento clicando no botão de reanálise abaixo.*"""
         return {
             "ok": False,
             "erro": str(e),
-            "relatorio": f"### ⚠️ Falha ao gerar o relatório por IA\n\nErro técnico ao chamar a inteligência artificial central no servidor Contabo: `{e}`"
+            "relatorio": rel_erro
         }
 
 # --- ESTAÇÕES ---

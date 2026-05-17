@@ -7,8 +7,8 @@ from typing import List
 
 app = FastAPI(title="EstudioHC Memory Hub (MCP)")
 
-# Caminho ajustado para seu Linux Mint
-DB_PATH = "/home/helcio/Apps/EstudioHC-Memory-Suite/server/estudiohc_memory.db"
+# Caminho adaptável para PC e Servidor
+DB_PATH = os.path.expanduser("~/Apps/EstudioHC-Memory-Suite/server/estudiohc_memory.db")
 
 class MemoryEntry(BaseModel):
     agent_name: str

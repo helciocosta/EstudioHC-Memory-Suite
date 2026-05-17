@@ -6,8 +6,8 @@ from mcp.server import Notification, Server
 import mcp.types as types
 from mcp.server.stdio import stdio_server
 
-# Caminho do banco de dados
-DB_PATH = "/home/helcio/Apps/EstudioHC-Memory-Suite/server/estudiohc_memory.db"
+# Caminho do banco de dados adaptável
+DB_PATH = os.path.expanduser("~/Apps/EstudioHC-Memory-Suite/server/estudiohc_memory.db")
 
 server = Server("estudiohc-memory")
 

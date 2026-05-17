@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EstudioHC Hub</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3e;--accent:#6c63ff;--accent2:#00d4aa;--text:#e2e8f0;--muted:#64748b;--red:#ff5f5f;--yellow:#ffd166}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+header{background:var(--card);border-bottom:1px solid var(--border);padding:14px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:100}
+header h1{font-size:18px;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block;margin-right:4px;transition:.3s}
+.status-dot.online{background:var(--accent2);box-shadow:0 0 6px var(--accent2)}
+.status-bar{margin-left:auto;display:flex;align-items:center;gap:16px;font-size:13px;color:var(--muted)}
+nav{display:flex;gap:4px;padding:0 24px;background:var(--card);border-bottom:1px solid var(--border)}
+nav button{padding:10px 18px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;border-bottom:2px solid transparent;transition:.2s}
+nav button.active,nav button:hover{color:var(--text);border-bottom-color:var(--accent)}
+main{flex:1;padding:24px;max-width:1200px;width:100%;margin:0 auto}
+.section{display:none}.section.active{display:block}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.card h2{font-size:16px;font-weight:600;margin-bottom:14px;color:var(--accent2)}
+/* Agenda */
+.cal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.cal-nav{background:var(--border);border:none;color:var(--text);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-day-name{text-align:center;font-size:11px;color:var(--muted);padding:4px;font-weight:600}
+.cal-day{min-height:52px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:6px;cursor:pointer;transition:.2s;position:relative}
+.cal-day:hover{border-color:var(--accent);background:#1e2035}
+.cal-day.today{border-color:var(--accent);background:#16183a}
+.cal-day.other-month{opacity:.3}
+.cal-day .day-num{font-size:12px;font-weight:600}
+.cal-day .evento-dot{width:6px;height:6px;border-radius:50%;background:var(--accent2);margin-top:3px}
+.eventos-lista{margin-top:16px}
+.evento-item{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;margin-bottom:8px}
+.evento-hora{font-size:12px;color:var(--accent);font-weight:600;min-width:45px}
+.evento-del{margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px}
+.evento-del:hover{color:var(--red)}
+.form-row{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.form-row input{flex:1;min-width:120px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px}
+.btn{padding:8px 18px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;transition:.2s}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:#574fd6}
+.btn-ai{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff}.btn-ai:hover{opacity:.85}
+/* Memória */
+.diario-list{display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto}
+.diario-item{padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:.2s;display:flex;align-items:center;justify-content:space-between}
+.diario-item:hover,.diario-item.active{border-color:var(--accent);background:#16183a}
+.diario-content{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;white-space:pre-wrap;font-size:13px;line-height:1.7;max-height:360px;overflow-y:auto;margin-top:12px;font-family:monospace}
+.ai-box{margin-top:12px;padding:14px;background:#0d1f1a;border:1px solid var(--accent2);border-radius:8px;font-size:13px;line-height:1.7;display:none}
+.ai-box.visible{display:block}
+textarea{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;resize:vertical;min-height:80px}
+/* Projetos */
+.proj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.proj-card{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:16px;transition:.2s}
+.proj-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+.proj-nome{font-weight:700;font-size:15px;margin-bottom:6px;color:var(--accent2)}
+.proj-local{font-size:11px;color:var(--muted);margin-bottom:8px;font-family:monospace}
+.proj-preview{font-size:12px;color:var(--muted);line-height:1.5;max-height:60px;overflow:hidden}
+.proj-actions{margin-top:10px;display:flex;gap:8px}
+.btn-sm{padding:5px 12px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-weight:600;transition:.2s}
+.btn-sm.ai{background:var(--accent);color:#fff}.btn-sm.ai:hover{background:#574fd6}
+/* Chat IA */
+.chat-box{height:360px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:80%;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6}
+.msg.user{background:var(--accent);color:#fff;align-self:flex-end;border-bottom-right-radius:2px}
+.msg.ai{background:var(--card);border:1px solid var(--border);align-self:flex-start;border-bottom-left-radius:2px}
+.msg.loading{color:var(--muted);font-style:italic}
+.chat-input{display:flex;gap:10px;margin-top:12px}
+.chat-input input{flex:1;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px}
+/* Search */
+.search-bar{width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin-bottom:14px}
+</style>
+</head>
+<body>
+<header>
+  <span>🎙️</span>
+  <h1>EstudioHC Hub</h1>
+  <div class="status-bar">
+    <span><span class="status-dot" id="kobold-dot"></span>KoboldCpp</span>
+    <span id="data-atual"></span>
+  </div>
+</header>
+<nav>
+  <button class="active" onclick="tab('agenda',this)">📅 Agenda</button>
+  <button onclick="tab('memoria',this)">🧠 Memória</button>
+  <button onclick="tab('projetos',this)">📁 Projetos</button>
+  <button onclick="tab('ia',this)">🤖 IA Local</button>
+</nav>
+<main>
+
+<!-- AGENDA -->
+<div class="section active" id="sec-agenda">
+  <div class="card">
+    <div class="cal-header">
+      <button class="cal-nav" onclick="mesAnterior()">‹</button>
+      <h2 id="mes-label" style="margin:0"></h2>
+      <button class="cal-nav" onclick="proximoMes()">›</button>
+    </div>
+    <div class="cal-grid" id="cal-grid"></div>
+  </div>
+  <div class="card">
+    <h2>📋 Eventos — <span id="dia-selecionado-label"></span></h2>
+    <div class="eventos-lista" id="eventos-lista"></div>
+    <div class="form-row">
+      <input type="time" id="ev-hora" value="09:00">
+      <input type="text" id="ev-titulo" placeholder="Título do evento..." style="flex:2">
+      <button class="btn btn-primary" onclick="adicionarEvento()">+ Adicionar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MEMÓRIA -->
+<div class="section" id="sec-memoria">
+  <div style="display:grid;grid-template-columns:260px 1fr;gap:16px">
+    <div class="card" style="padding:14px">
+      <h2>Diários</h2>
+      <input class="search-bar" placeholder="Buscar..." id="busca-diario" oninput="filtrarDiarios()">
+      <div class="diario-list" id="diario-list"></div>
+    </div>
+    <div>
+      <div class="card">
+        <h2 id="diario-titulo">Selecione um diário</h2>
+        <div class="diario-content" id="diario-content">←  Clique em um diário na lista</div>
+        <div style="margin-top:10px;display:flex;gap:10px">
+          <button class="btn btn-ai" onclick="resumirDiario()" id="btn-resumir" style="display:none">✨ Resumir com IA</button>
+        </div>
+        <div class="ai-box" id="ai-resumo"></div>
+      </div>
+      <div class="card">
+        <h2>📝 Nova Nota (hoje)</h2>
+        <textarea id="nota-texto" placeholder="Registre uma nota, tarefa ou memória..."></textarea>
+        <div style="margin-top:10px">
+          <button class="btn btn-primary" onclick="adicionarNota()">💾 Salvar Nota</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PROJETOS -->
+<div class="section" id="sec-projetos">
+  <div class="card">
+    <h2>📁 Projetos Mapeados</h2>
+    <input class="search-bar" placeholder="Filtrar projetos..." id="busca-proj" oninput="filtrarProjetos()">
+    <div class="proj-grid" id="proj-grid"></div>
+  </div>
+</div>
+
+<!-- IA LOCAL -->
+<div class="section" id="sec-ia">
+  <div class="card">
+    <h2>🤖 Chat — KoboldCpp Local</h2>
+    <div class="chat-box" id="chat-box"></div>
+    <div class="chat-input">
+      <input type="text" id="chat-input" placeholder="Pergunte algo..." onkeydown="if(event.key==='Enter')enviarChat()">
+      <button class="btn btn-primary" onclick="enviarChat()">Enviar</button>
+    </div>
+  </div>
+</div>
+
+</main>
+<script>
+const API = 'http://localhost:8585/api';
+let diaAtual = new Date();
+let diaSelecionado = new Date();
+let agenda = [];
+let todosDiarios = [];
+let todosProjetos = [];
+let diarioAtualConteudo = '';
+
+// ── Utilitários ────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+
+function tab(nome, btn) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  $('sec-'+nome).classList.add('active');
+  btn.classList.add('active');
+  if(nome==='projetos' && todosProjetos.length===0) carregarProjetos();
+  if(nome==='memoria' && todosDiarios.length===0) carregarDiarios();
+}
+
+function formatarData(d) {
+  return d.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'long'});
+}
+
+// ── Status ─────────────────────────────────────────────────────
+async function verificarStatus() {
+  try {
+    const r = await fetch(`${API}/status`);
+    const d = await r.json();
+    const dot = $('kobold-dot');
+    dot.classList.toggle('online', d.koboldcpp);
+  } catch(e) {}
+}
+
+// ── Calendário ─────────────────────────────────────────────────
+async function carregarAgenda() {
+  try {
+    const r = await fetch(`${API}/agenda`);
+    agenda = await r.json();
+  } catch(e) { agenda = []; }
+  renderCalendario();
+}
+
+async function salvarAgenda() {
+  await fetch(`${API}/agenda`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({eventos: agenda})
+  });
+}
+
+function renderCalendario() {
+  const ano = diaAtual.getFullYear();
+  const mes = diaAtual.getMonth();
+  $('mes-label').textContent = diaAtual.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+  const grid = $('cal-grid');
+  grid.innerHTML = '';
+  ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'cal-day-name'; el.textContent = d;
+    grid.appendChild(el);
+  });
+  const primeiro = new Date(ano, mes, 1);
+  const ultimo = new Date(ano, mes+1, 0);
+  const hoje = new Date();
+  for(let i = 0; i < primeiro.getDay(); i++) {
+    const el = document.createElement('div');
+    el.className = 'cal-day other-month';
+    grid.appendChild(el);
+  }
+  for(let d = 1; d <= ultimo.getDate(); d++) {
+    const el = document.createElement('div');
+    const dataStr = `${ano}-${String(mes+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    el.className = 'cal-day';
+    if(d===hoje.getDate()&&mes===hoje.getMonth()&&ano===hoje.getFullYear()) el.classList.add('today');
+    el.innerHTML = `<div class="day-num">${d}</div>`;
+    const evsDia = agenda.filter(e => e.data===dataStr);
+    evsDia.slice(0,2).forEach(() => {
+      const dot = document.createElement('div');
+      dot.className = 'evento-dot'; el.appendChild(dot);
+    });
+    el.onclick = () => { diaSelecionado = new Date(ano, mes, d); renderEventosDia(); };
+    grid.appendChild(el);
+  }
+  renderEventosDia();
+}
+
+function renderEventosDia() {
+  const dataStr = diaSelecionado.toISOString().split('T')[0];
+  $('dia-selecionado-label').textContent = formatarData(diaSelecionado);
+  const lista = $('eventos-lista');
+  const evsDia = agenda.filter(e => e.data===dataStr).sort((a,b) => a.hora.localeCompare(b.hora));
+  lista.innerHTML = evsDia.length === 0
+    ? '<p style="color:var(--muted);font-size:13px;padding:8px">Nenhum evento neste dia.</p>'
+    : evsDia.map((ev,i) => `
+      <div class="evento-item">
+        <span class="evento-hora">${ev.hora}</span>
+        <span>${ev.titulo}</span>
+        <button class="evento-del" onclick="removerEvento('${ev.id}')">✕</button>
+      </div>`).join('');
+}
+
+function adicionarEvento() {
+  const hora = $('ev-hora').value;
+  const titulo = $('ev-titulo').value.trim();
+  if(!titulo) return;
+  const dataStr = diaSelecionado.toISOString().split('T')[0];
+  agenda.push({id: Date.now().toString(), data: dataStr, hora, titulo});
+  $('ev-titulo').value = '';
+  salvarAgenda();
+  renderCalendario();
+}
+
+function removerEvento(id) {
+  agenda = agenda.filter(e => e.id !== id);
+  salvarAgenda();
+  renderEventosDia();
+}
+
+function mesAnterior() { diaAtual.setMonth(diaAtual.getMonth()-1); renderCalendario(); }
+function proximoMes() { diaAtual.setMonth(diaAtual.getMonth()+1); renderCalendario(); }
+
+// ── Memória ────────────────────────────────────────────────────
+async function carregarDiarios() {
+  const r = await fetch(`${API}/diarios`);
+  todosDiarios = await r.json();
+  renderDiarios(todosDiarios);
+}
+
+function renderDiarios(lista) {
+  $('diario-list').innerHTML = lista.map(d => `
+    <div class="diario-item" onclick="abrirDiario('${d.data}',this)">
+      <span>${d.data}</span>
+      <span style="font-size:11px;color:var(--muted)">${(d.tamanho/1024).toFixed(1)}KB</span>
+    </div>`).join('');
+}
+
+function filtrarDiarios() {
+  const q = $('busca-diario').value.toLowerCase();
+  renderDiarios(todosDiarios.filter(d => d.data.includes(q)));
+}
+
+async function abrirDiario(data, el) {
+  document.querySelectorAll('.diario-item').forEach(e => e.classList.remove('active'));
+  el.classList.add('active');
+  const r = await fetch(`${API}/diario/${data}`);
+  const d = await r.json();
+  $('diario-titulo').textContent = `📄 ${data}`;
+  $('diario-content').textContent = d.conteudo;
+  diarioAtualConteudo = d.conteudo;
+  $('btn-resumir').style.display = 'inline-flex';
+  $('ai-resumo').classList.remove('visible');
+}
+
+async function resumirDiario() {
+  $('ai-resumo').textContent = '✨ Gerando resumo com IA...';
+  $('ai-resumo').classList.add('visible');
+  const trecho = diarioAtualConteudo.slice(0, 1500);
+  const r = await fetch(`${API}/kobold`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({mensagem: `Faça um resumo conciso e organizado deste diário de trabalho:\n\n${trecho}`})
+  });
+  const d = await r.json();
+  $('ai-resumo').textContent = d.resposta || d.erro;
+}
+
+async function adicionarNota() {
+  const texto = $('nota-texto').value.trim();
+  if(!texto) return;
+  await fetch(`${API}/nota`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({texto})
+  });
+  $('nota-texto').value = '';
+  alert('✅ Nota salva no diário de hoje!');
+  todosDiarios = [];
+}
+
+// ── Projetos ───────────────────────────────────────────────────
+async function carregarProjetos() {
+  const r = await fetch(`${API}/projetos`);
+  todosProjetos = await r.json();
+  renderProjetos(todosProjetos);
+}
+
+function renderProjetos(lista) {
+  $('proj-grid').innerHTML = lista.map(p => `
+    <div class="proj-card">
+      <div class="proj-nome">${p.nome}</div>
+      <div class="proj-local">${p.local}</div>
+      <div class="proj-preview">${p.preview}</div>
+      <div class="proj-actions">
+        <button class="btn-sm ai" onclick="perguntarIA('${p.nome.replace(/'/g,"\\'")}','${p.preview.replace(/'/g,"\\'").slice(0,200)}')">🤖 Perguntar IA</button>
+      </div>
+    </div>`).join('');
+}
+
+function filtrarProjetos() {
+  const q = $('busca-proj').value.toLowerCase();
+  renderProjetos(todosProjetos.filter(p => p.nome.toLowerCase().includes(q)));
+}
+
+function perguntarIA(nome, preview) {
+  tab('ia', document.querySelectorAll('nav button')[3]);
+  $('chat-input').value = `O que você sabe sobre o projeto "${nome}"? ${preview ? 'Contexto: '+preview : ''}`;
+  $('chat-input').focus();
+}
+
+// ── Chat IA ────────────────────────────────────────────────────
+function addMsg(texto, tipo) {
+  const box = $('chat-box');
+  const msg = document.createElement('div');
+  msg.className = `msg ${tipo}`;
+  msg.textContent = texto;
+  box.appendChild(msg);
+  box.scrollTop = box.scrollHeight;
+  return msg;
+}
+
+async function enviarChat() {
+  const input = $('chat-input');
+  const texto = input.value.trim();
+  if(!texto) return;
+  input.value = '';
+  addMsg(texto, 'user');
+  const loading = addMsg('⏳ Pensando...', 'ai loading');
+  try {
+    const r = await fetch(`${API}/kobold`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({mensagem: texto})
+    });
+    const d = await r.json();
+    loading.className = 'msg ai';
+    loading.textContent = d.resposta || d.erro;
+  } catch(e) {
+    loading.textContent = '❌ KoboldCpp offline. Inicie o serviço.';
+  }
+}
+
+// ── Init ────────────────────────────────────────────────────────
+$('data-atual').textContent = new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});
+verificarStatus();
+setInterval(verificarStatus, 10000);
+carregarAgenda();
+</script>
+</body>
+</html>

@@ -2,8 +2,9 @@ import requests
 import sys
 import os
 
-STATUS_URL = "http://127.0.0.1:5050/status/CGDOC"
-REMEMBER_URL = "http://127.0.0.1:5050/remember"
+# Servidor de memória local (uvicorn rodando na porta 5050)
+STATUS_URL = "http://localhost:5050/status/EstudioHC"
+REMEMBER_URL = "http://localhost:5050/remember"
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -11,7 +12,7 @@ def clear_screen():
 def show_dashboard():
     clear_screen()
     print("\033[95m" + "="*50 + "\033[0m")
-    print("\033[1;97m" + "       HUB DE STATUS GLOBAL - PROJETO CGDOC" + "\033[0m")
+    print("\033[1;97m" + "       HUB DE STATUS GLOBAL - PROJETO EstudioHC" + "\033[0m")
     print("\033[95m" + "="*50 + "\033[0m")
 
     try:
@@ -49,7 +50,7 @@ def show_dashboard():
                 # Registrar a retomada na memória
                 payload = {
                     "agent_name": "Dashboard_Terminal",
-                    "project": "CGDOC",
+                    "project": "EstudioHC",
                     "content": f"USUÁRIO RETOMOU A TAREFA: {selected}",
                     "category": "fact"
                 }
@@ -63,7 +64,7 @@ def show_dashboard():
                     
                     # Filtra linhas antigas de status para não acumular
                     new_lines = [l for l in lines if "STATUS ATUAL:" not in l and "## Contexto do Projeto" not in l]
-                    new_lines.append("\n## Contexto do Projeto (CGDOC)\n")
+                    new_lines.append("\n## Contexto do Projeto (EstudioHC)\n")
                     new_lines.append(f"- STATUS ATUAL: {selected}\n")
                     
                     with open(gemini_md, 'w', encoding='utf-8') as f:

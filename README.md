@@ -1,4 +1,4 @@
-# CGDOC Context & Memory Hub
+# EstudioHC Context & Memory Hub
 
 Este projeto é um ecossistema de memória persistente para agentes de IA (Gemini, Vibe, Antigravity, SillyTavern). Ele permite que você tenha um histórico unificado de tarefas e contextos que te segue entre diferentes terminais e computadores.
 
@@ -49,7 +49,7 @@ Isso garantirá que, ao mudar de PC, o banco de dados e o contexto do Gemini est
 ### Gemini CLI
 Adicione o servidor ao seu `~/.gemini/settings.json`:
 ```json
-"cgdoc-memory": {
+"estudiohc-memory": {
   "command": "/caminho/para/python3",
   "args": ["/caminho/para/mcp_stdio_server.py"]
 }

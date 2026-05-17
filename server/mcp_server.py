@@ -5,10 +5,10 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import List
 
-app = FastAPI(title="CGDOC Memory Hub (MCP)")
+app = FastAPI(title="EstudioHC Memory Hub (MCP)")
 
 # Caminho ajustado para seu Linux Mint
-DB_PATH = "/home/helcio/Apps/GeminiMCPHost/cgdoc_memory.db"
+DB_PATH = "/home/helcio/Apps/EstudioHC-Memory-Suite/server/estudiohc_memory.db"
 
 class MemoryEntry(BaseModel):
     agent_name: str

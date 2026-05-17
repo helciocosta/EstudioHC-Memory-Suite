@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  estudio — Comando de status do EstudioHC                   ║
+# ║  Uso: estudio                                               ║
+# ║  Instalar: sudo cp estudio /usr/local/bin/estudio           ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+SERVIDOR="deploy@100.64.117.78"
+STATUS_REMOTO="/home/deploy/STATUS_ESTUDIOHC.md"
+ESTACAO=$(hostname)
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M')
+
+# Cores
+VERDE='\033[0;32m'
+AMARELO='\033[1;33m'
+VERMELHO='\033[0;31m'
+AZUL='\033[0;34m'
+CIANO='\033[0;36m'
+NEGRITO='\033[1m'
+RESET='\033[0m'
+
+echo ""
+echo -e "${NEGRITO}${AZUL}╔══════════════════════════════════════════════════════╗${RESET}"
+echo -e "${NEGRITO}${AZUL}║         🎙️  EstudioHC — Central de Comando           ║${RESET}"
+echo -e "${NEGRITO}${AZUL}╚══════════════════════════════════════════════════════╝${RESET}"
+echo -e "  ${CIANO}Estação:${RESET} ${NEGRITO}${ESTACAO}${RESET}   ${CIANO}Data:${RESET} ${TIMESTAMP}"
+echo ""
+
+# ── 1. Verificar serviços LOCAIS ─────────────────────────────────
+echo -e "${NEGRITO}── Serviços Locais ──────────────────────────────────────${RESET}"
+
+check_service() {
+    local nome="$1"
+    local servico="$2"
+    if systemctl is-active --quiet "$servico" 2>/dev/null; then
+        echo -e "  ${VERDE}●${RESET} ${nome}"
+    else
+        echo -e "  ${VERMELHO}○${RESET} ${nome} ${VERMELHO}(inativo)${RESET}"
+    fi
+}
+
+check_port() {
+    local nome="$1"
+    local porta="$2"
+    if curl -s --max-time 2 "http://localhost:${porta}" > /dev/null 2>&1 || \
+       ss -tlnp 2>/dev/null | grep -q ":${porta}"; then
+        echo -e "  ${VERDE}●${RESET} ${nome} (porta ${porta})"
+    else
+        echo -e "  ${AMARELO}○${RESET} ${nome} (porta ${porta} — verificar)"
+    fi
+}
+
+check_service "EstudioHC Hub" "estudiohc-hub"
+check_service "KoboldCpp (IA Local)" "koboldcpp"
+check_port    "Hub Web" "8585"
+
+echo ""
+
+# ── 2. Verificar conexão com SERVIDOR CENTRAL ───────────────────
+echo -e "${NEGRITO}── Servidor Central (Contabo) ───────────────────────────${RESET}"
+
+PING_OK=false
+if ping -c 1 -W 2 100.64.117.78 > /dev/null 2>&1; then
+    PING_OK=true
+    echo -e "  ${VERDE}●${RESET} Servidor Contabo (100.64.117.78) — acessível via Tailscale"
+else
+    echo -e "  ${VERMELHO}○${RESET} Servidor Contabo — INACESSÍVEL (Tailscale offline?)"
+fi
+
+# Verificar serviço central no servidor
+if [ "$PING_OK" = true ]; then
+    CENTRAL_STATUS=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$SERVIDOR" \
+        "systemctl is-active estudiohc-central 2>/dev/null || echo 'nao-instalado'" 2>/dev/null)
+    case "$CENTRAL_STATUS" in
+        active)
+            echo -e "  ${VERDE}●${RESET} EstudioHC Central API — online"
+            ;;
+        nao-instalado)
+            echo -e "  ${AMARELO}○${RESET} EstudioHC Central API — ${AMARELO}ainda não instalada (FASE 1 pendente)${RESET}"
+            ;;
+        *)
+            echo -e "  ${VERMELHO}○${RESET} EstudioHC Central API — parada (reiniciar?)"
+            ;;
+    esac
+
+    MCP_STATUS=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$SERVIDOR" \
+        "systemctl is-active estudiohc-memory 2>/dev/null || curl -s --max-time 2 http://localhost:5050/ > /dev/null 2>&1 && echo 'active' || echo 'parado'" 2>/dev/null)
+    if echo "$MCP_STATUS" | grep -q "active"; then
+        echo -e "  ${VERDE}●${RESET} MCP Memory Suite — online (porta 5050)"
+    else
+        echo -e "  ${VERMELHO}○${RESET} MCP Memory Suite — parado"
+    fi
+fi
+
+echo ""
+
+# ── 3. Tarefas pendentes do servidor ────────────────────────────
+echo -e "${NEGRITO}── Próximas Tarefas (do Servidor) ──────────────────────${RESET}"
+
+if [ "$PING_OK" = true ]; then
+    ssh -o ConnectTimeout=5 -o BatchMode=yes "$SERVIDOR" \
+        "grep '\- \[ \]' /home/deploy/STATUS_ESTUDIOHC.md 2>/dev/null | head -8" 2>/dev/null \
+        | sed 's/- \[ \]/  ○/g' | while IFS= read -r linha; do
+            echo -e "  ${AMARELO}○${RESET}${linha#  ○}"
+        done
+    
+    TOTAL=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$SERVIDOR" \
+        "grep -c '\- \[ \]' /home/deploy/STATUS_ESTUDIOHC.md 2>/dev/null" 2>/dev/null || echo "?")
+    echo -e "\n  ${CIANO}Total de tarefas pendentes: ${NEGRITO}${TOTAL}${RESET}"
+else
+    echo -e "  ${AMARELO}⚠ Servidor inacessível — lendo cache local${RESET}"
+    if [ -f "$HOME/.estudio_cache/STATUS.md" ]; then
+        grep '\- \[ \]' "$HOME/.estudio_cache/STATUS.md" | head -8 | sed 's/- \[ \]/  ○/g'
+    else
+        echo "  Sem cache local disponível."
+    fi
+fi
+
+echo ""
+
+# ── 4. Próximo passo recomendado ─────────────────────────────────
+echo -e "${NEGRITO}── Próximo Passo ────────────────────────────────────────${RESET}"
+if [ "$PING_OK" = true ]; then
+    PROXIMO=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "$SERVIDOR" \
+        "grep '\- \[ \]' /home/deploy/STATUS_ESTUDIOHC.md 2>/dev/null | head -1" 2>/dev/null \
+        | sed 's/.*\- \[ \] //')
+    if [ -n "$PROXIMO" ]; then
+        echo -e "  ${VERDE}▶${RESET} ${PROXIMO}"
+    fi
+fi
+
+echo ""
+echo -e "${AZUL}  Para ver o plano completo:${RESET}"
+echo -e "  ${NEGRITO}ssh deploy@100.64.117.78 \"cat /home/deploy/STATUS_ESTUDIOHC.md\"${RESET}"
+echo -e "  ${NEGRITO}estudio --plano${RESET}"
+echo ""
+echo -e "${NEGRITO}${AZUL}══════════════════════════════════════════════════════${RESET}"
+echo ""
+
+# ── Modo --plano ────────────────────────────────────────────────
+if [ "${1}" = "--plano" ] && [ "$PING_OK" = true ]; then
+    echo ""
+    ssh -o ConnectTimeout=5 -o BatchMode=yes "$SERVIDOR" \
+        "cat /home/deploy/STATUS_ESTUDIOHC.md" 2>/dev/null
+fi

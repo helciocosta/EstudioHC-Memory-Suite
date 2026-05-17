@@ -7,9 +7,9 @@ import mcp.types as types
 from mcp.server.stdio import stdio_server
 
 # Caminho do banco de dados
-DB_PATH = "/home/helcio/Apps/GeminiMCPHost/cgdoc_memory.db"
+DB_PATH = "/home/helcio/Apps/EstudioHC-Memory-Suite/server/estudiohc_memory.db"
 
-server = Server("cgdoc-memory")
+server = Server("estudiohc-memory")
 
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
@@ -21,7 +21,7 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "project": {"type": "string", "description": "Nome do projeto (ex: CGDOC)"}
+                    "project": {"type": "string", "description": "Nome do projeto (ex: EstudioHC)"}
                 },
                 "required": ["project"],
             },
@@ -46,7 +46,7 @@ async def handle_call_tool(
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     """Handle tool calls."""
     if name == "get_project_status":
-        project = arguments.get("project", "CGDOC")
+        project = arguments.get("project", "EstudioHC")
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -62,7 +62,7 @@ async def handle_call_tool(
         return [types.TextContent(type="text", text=res)]
 
     elif name == "recall_memory":
-        project = arguments.get("project", "CGDOC")
+        project = arguments.get("project", "EstudioHC")
         limit = arguments.get("limit", 10)
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -82,7 +82,7 @@ async def main():
             read_stream,
             write_stream,
             InitializationOptions(
-                server_name="cgdoc-memory",
+                server_name="estudiohc-memory",
                 server_version="0.1.0",
                 capabilities=server.get_capabilities(),
             ),

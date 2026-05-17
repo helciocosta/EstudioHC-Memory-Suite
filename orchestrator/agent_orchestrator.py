@@ -4,14 +4,23 @@ import os
 import json
 import glob
 import psutil
+import socket
+from datetime import date
 # Configurações do ecossistema
-MEMO_HUB_URL = "http://127.0.0.1:5050/remember"
-RECALL_URL = "http://127.0.0.1:5050/recall/CGDOC"
+MEMO_HUB_URL = "http://100.64.117.78:5050/remember"
+RECALL_URL = "http://100.64.117.78:5050/recall/EstudioHC"
 SILLY_TAVERN_LOGS = "/home/helcio/Apps/LocalAI/SillyTavern/data/default-user/chats"
-KOBOLD_API_URL = "http://127.0.0.1:5001/v1/chat/completions"
+KOBOLD_API_URL = "http://127.0.0.1:11434/v1/chat/completions"
+
+# Caminhos do Diário e Dashboard
+DIRETORIO_DIARIO = "/home/helcio/Apps/estudiohc-diario"
+DASHBOARD_PATH = os.path.join(DIRETORIO_DIARIO, "PROJETOS_STATUS.md")
+
+# Identidade da Máquina
+HOSTNAME = socket.gethostname().upper()
 
 AGENT_NAME = "Antigravity"
-PROJECT_NAME = "CGDOC"
+PROJECT_NAME = "EstudioHC"
 
 def sync_to_memory(agent, project, content, category="chat"):
     data = {
@@ -35,6 +44,50 @@ def sync_to_memory(agent, project, content, category="chat"):
 last_processed_time = 0
 last_processed_text = ""
 known_chat_files = set()
+
+# Controle de estado para Diário e Dashboard
+last_dashboard_mtime = 0
+last_diario_file = ""
+last_diario_lines = 0
+
+def check_diario_updates():
+    """Monitora mudanças no Dashboard e no Log Diário"""
+    global last_dashboard_mtime, last_diario_file, last_diario_lines
+    
+    # 1. Monitorar Dashboard de Projetos (PROJETOS_STATUS.md)
+    if os.path.exists(DASHBOARD_PATH):
+        mtime = os.path.getmtime(DASHBOARD_PATH)
+        if mtime > last_dashboard_mtime:
+            try:
+                with open(DASHBOARD_PATH, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    sync_to_memory(AGENT_NAME, PROJECT_NAME, content, category="dashboard")
+                    print(f"[Dashboard] Sincronizado status dos projetos.")
+                last_dashboard_mtime = mtime
+            except Exception as e:
+                print(f"Erro ao ler dashboard: {e}")
+
+    # 2. Monitorar Log Diário Atual (YYYY-MM-DD_COMPLETO.txt)
+    hoje = date.today().strftime("%Y-%m-%d")
+    arquivo_hoje = os.path.join(DIRETORIO_DIARIO, f"{hoje}_COMPLETO.txt")
+    
+    if os.path.exists(arquivo_hoje):
+        # Se mudou o arquivo (virou o dia)
+        if arquivo_hoje != last_diario_file:
+            last_diario_file = arquivo_hoje
+            last_diario_lines = 0
+            
+        try:
+            with open(arquivo_hoje, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                if len(lines) > last_diario_lines:
+                    new_content = "".join(lines[last_diario_lines:]).strip()
+                    if new_content:
+                        sync_to_memory(AGENT_NAME, PROJECT_NAME, new_content, category="daily_log")
+                        print(f"[Diário] {len(lines) - last_diario_lines} novas linhas sincronizadas.")
+                    last_diario_lines = len(lines)
+        except Exception as e:
+            print(f"Erro ao ler log diário: {e}")
 
 def auto_inject_memory(filepath):
     """Busca memórias recentes e injeta como mensagem de sistema no novo chat"""
@@ -145,7 +198,11 @@ def evaluate_with_llm(context):
         return None
 
 if __name__ == "__main__":
-    print("--- Orquestrador de Memória CGDOC Ativo ---")
+    print(f"--- Orquestrador de Memória EstudioHC Ativo [{HOSTNAME}] ---")
+    
+    # Registrar início de sessão
+    sync_to_memory(AGENT_NAME, "Ecosystem", f"SESSÃO INICIADA: {HOSTNAME}", category="session")
+    
     print(f"Monitorando: {SILLY_TAVERN_LOGS}")
     print(f"Enviando para: {MEMO_HUB_URL}")
     print(f"Raciocínio via: {KOBOLD_API_URL}")
@@ -158,8 +215,11 @@ if __name__ == "__main__":
         
         # 1. Manter a leitura de logs do SillyTavern
         check_new_chats()
+
+        # 2. Monitorar Diário e Dashboard
+        check_diario_updates()
         
-        # 2. Raciocínio Autônomo
+        # 3. Raciocínio Autônomo
         if current_time - last_llm_eval_time >= EVAL_INTERVAL:
             context = gather_system_context()
             # print(f"[Sistema] Contexto: {context}") # Descomente para debug detalhado

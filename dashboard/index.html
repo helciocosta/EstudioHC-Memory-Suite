@@ -439,7 +439,7 @@ function renderProjetos(lista) {
       <div class="proj-local">${p.local}</div>
       <div class="proj-preview">${p.preview}</div>
       <div class="proj-actions">
-        <button class="btn-sm ai" onclick="perguntarIA('${p.nome.replace(/'/g,"\\'")}','${p.preview.replace(/'/g,"\\'").slice(0,200)}')">🤖 Perguntar IA</button>
+        <button class="btn-sm ai" onclick="perguntarIA('${p.nome.replace(/'/g,"\\\\'")}')">🤖 Perguntar IA</button>
       </div>
     </div>`).join('');
 }
@@ -449,9 +449,11 @@ function filtrarProjetos() {
   renderProjetos(todosProjetos.filter(p => p.nome.toLowerCase().includes(q)));
 }
 
-function perguntarIA(nome, preview) {
+function perguntarIA(nome) {
   tab('ia', document.querySelectorAll('nav button')[3]);
-  $('chat-input').value = `O que você sabe sobre o projeto "${nome}"? ${preview ? 'Contexto: '+preview : ''}`;
+  const proj = todosProjetos.find(p => p.nome === nome);
+  const preview = proj ? proj.preview : "";
+  $('chat-input').value = `O que você sabe sobre o projeto "${nome}"? ${preview ? 'Contexto: '+preview.slice(0, 300) : ''}`;
   $('chat-input').focus();
 }
 

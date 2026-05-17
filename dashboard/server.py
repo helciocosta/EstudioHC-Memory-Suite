@@ -227,10 +227,12 @@ def gerar_relatorio_local(nome):
             headers={"Content-Type": "application/json"},
             method="POST"
         )
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        with urllib.request.urlopen(req, timeout=240) as resp:
+            data_res = json.loads(resp.read().decode("utf-8"))
+            print("✅ Sucesso ao obter resposta do servidor central para o projeto:", nome)
+            return data_res
     except Exception as e:
-        print("Erro ao gerar relatório com o servidor central, usando fallback local:", e)
+        print("❌ Erro ao gerar relatório com o servidor central, usando fallback local:", e)
         import datetime
         status_geral = "Ativo (Em Desenvolvimento)" if git_status else "Parado / Estável"
         fallback_rel = f"""# Relatório de Estado — {nome} (Offline Fallback)

@@ -371,6 +371,17 @@ async def get_status_api():
         "timestamp": datetime.now().isoformat()
     }
 
+@app.get("/api/status_md")
+async def get_status_md():
+    for p in ["/home/deploy/STATUS_ESTUDIOHC.md", os.path.expanduser("~/STATUS_ESTUDIOHC.md")]:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return {"conteudo": f.read()}
+            except Exception as e:
+                return {"erro": str(e)}
+    return {"erro": "STATUS_ESTUDIOHC.md não encontrado nos locais padrão"}
+
 # ── 3. Servidor de Arquivos Estáticos do Dashboard (Fim do Arquivo) ──
 
 if os.path.exists(DASHBOARD_PATH):

@@ -345,7 +345,7 @@ async def chat_hermes(payload: ChatPayload):
         prompt = f"[Contexto EstudioHC: {payload.contexto}]\n\n{payload.mensagem}"
     try:
         resultado = subprocess.run(
-            [HERMES_CLI, "-z", prompt],
+            [HERMES_CLI, "-z", prompt, "chat"],
             capture_output=True,
             text=True,
             timeout=120,

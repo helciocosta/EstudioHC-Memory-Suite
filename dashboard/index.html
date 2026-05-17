@@ -45,7 +45,7 @@ main{flex:1;padding:24px;max-width:1200px;width:100%;margin:0 auto}
 .diario-list{display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto}
 .diario-item{padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:.2s;display:flex;align-items:center;justify-content:space-between}
 .diario-item:hover,.diario-item.active{border-color:var(--accent);background:#16183a}
-.diario-content{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;white-space:pre-wrap;font-size:13px;line-height:1.7;max-height:360px;overflow-y:auto;margin-top:12px;font-family:monospace}
+.diario-content{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;white-space:pre-wrap;font-size:13px;line-height:1.7;max-height:120px;overflow-y:auto;margin-top:12px;font-family:monospace}
 .ai-box{margin-top:12px;padding:14px;background:#0d1f1a;border:1px solid var(--accent2);border-radius:8px;font-size:13px;line-height:1.7;display:none}
 .ai-box.visible{display:block}
 textarea{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;resize:vertical;min-height:80px}
@@ -377,7 +377,9 @@ async function abrirDiario(data, el) {
   $('diario-content').textContent = d.conteudo;
   diarioAtualConteudo = d.conteudo;
   $('btn-resumir').style.display = 'inline-flex';
-  $('ai-resumo').classList.remove('visible');
+  
+  // Executa o resumo de IA de forma automática
+  resumirDiario();
 }
 
 async function resumirDiario() {

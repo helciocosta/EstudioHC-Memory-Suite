@@ -59,6 +59,14 @@ class ProjetoEntry(BaseModel):
 class ProjetosSyncPayload(BaseModel):
     projetos: List[ProjetoEntry]
 
+class ProjetoRelatorioPayload(BaseModel):
+    nome: str
+    readme: Optional[str] = ""
+    git_status: Optional[str] = ""
+    git_log: Optional[str] = ""
+    estacao: Optional[str] = "desconhecida"
+    tasks_content: Optional[str] = ""
+
 class ChatPayload(BaseModel):
     mensagem: str
     contexto: Optional[str] = ""
@@ -352,6 +360,141 @@ async def sync_projetos_api(payload: ProjetosSyncPayload):
         return {"ok": True, "count": len(payload.projetos)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/projetos/gerar-relatorio")
+async def gerar_relatorio_api(payload: ProjetoRelatorioPayload):
+    nome = payload.nome
+    estacao = payload.estacao
+    readme = payload.readme
+    git_status = payload.git_status
+    git_log = payload.git_log
+    tasks_content = payload.tasks_content
+
+    # Se for o próprio servidor central e os metadados estiverem vazios, lê do servidor local
+    if estacao in ("central", "vmi2968998") or "EstudioHC-Memory-Suite" in nome:
+        servidor_path = "/home/deploy/Apps/EstudioHC-Memory-Suite"
+        if os.path.exists(servidor_path):
+            if not readme:
+                readme_path = os.path.join(servidor_path, "README.md")
+                if os.path.exists(readme_path):
+                    try:
+                        with open(readme_path, "r", encoding="utf-8") as f:
+                            readme = f.read(4000)
+                    except Exception:
+                        pass
+            if not git_status:
+                try:
+                    res = subprocess.run(["git", "status", "--porcelain"], cwd=servidor_path, capture_output=True, text=True, timeout=5)
+                    git_status = res.stdout.strip()
+                except Exception:
+                    pass
+            if not git_log:
+                try:
+                    res = subprocess.run(["git", "log", "-n", "5", "--oneline"], cwd=servidor_path, capture_output=True, text=True, timeout=5)
+                    git_log = res.stdout.strip()
+                except Exception:
+                    pass
+
+    # Prompt estruturado forçando JSON
+    prompt = f"""Você é o analista de sistemas sênior do ecossistema EstudioHC.
+Com base nas informações técnicas brutas fornecidas do projeto, gere um relatório de estado atual impecável, profissional, estruturado em markdown e estritamente em Português do Brasil.
+
+[Informações Técnicas do Projeto]
+Nome do Projeto: {nome}
+Estação de Trabalho: {estacao}
+Git Status (Arquivos modificados ou pendentes):
+{git_status or 'Nenhuma modificação pendente.'}
+
+Últimos Commits (Git Log):
+{git_log or 'Nenhum histórico recente.'}
+
+Conteúdo do README / Preview:
+{readme or 'Nenhuma descrição técnica disponível.'}
+
+Conteúdo do Arquivo de Tarefas (task.md/todo.md):
+{tasks_content or 'Nenhuma lista de tarefas formal encontrada.'}
+
+Por favor, gere duas informações:
+1. Um resumo curto e cativante sobre o projeto, traduzido e adaptado para o Português do Brasil (máximo de 200 caracteres), focado em qual o objetivo do projeto.
+2. Um relatório técnico completo e aprofundado estruturado em Markdown, contendo:
+   - 📊 **Estado Geral:** (Se está "Ativo (Em Desenvolvimento)" ou "Parado / Estável") em destaque, justificando com base no git status e commits recentes.
+   - 🚀 **Fase de Implementação:** Defina uma fase realista (ex: Fase 1: Planejamento, Fase 2: Estruturação, Fase 3: Polimento/Finalização, ou Estável).
+   - 📋 **Tarefas Pendentes:** Liste tarefas recomendadas para continuidade (extraídas do task.md ou propostas de forma realista por você).
+   - 🔄 **Últimas Tarefas Executadas:** Liste as últimas 5 ações/commits do projeto formatados como uma linha do tempo/histórico.
+   - ⚠️ **Erros e Alertas:** Destaque quaisquer arquivos modificados sem commit, commits não enviados ou possíveis problemas encontrados nos metadados.
+
+Você DEVE retornar sua resposta ESTRETAMENTE em formato JSON com a seguinte estrutura de chaves (não inclua nenhuma explicação extra antes ou depois do JSON):
+{{
+  "preview_pt": "Descrição traduzida curta de 200 caracteres em português",
+  "relatorio_md": "Conteúdo completo do relatório formatado em Markdown premium"
+}}
+"""
+    try:
+        resultado = subprocess.run(
+            [HERMES_CLI, "-z", prompt, "chat"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"}
+        )
+        saida = resultado.stdout.strip()
+        
+        # Parser robusto de JSON
+        import re
+        import json
+        
+        preview_pt = ""
+        relatorio_md = ""
+        
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', saida, re.DOTALL)
+        if json_match:
+            try:
+                data = json.loads(json_match.group(1))
+                preview_pt = data.get("preview_pt", "")
+                relatorio_md = data.get("relatorio_md", "")
+            except Exception:
+                pass
+                
+        if not relatorio_md:
+            json_match = re.search(r'(\{.*\})', saida, re.DOTALL)
+            if json_match:
+                try:
+                    data = json.loads(json_match.group(1))
+                    preview_pt = data.get("preview_pt", "")
+                    relatorio_md = data.get("relatorio_md", "")
+                except Exception:
+                    pass
+                    
+        if not relatorio_md:
+            preview_pt = saida[:200]
+            relatorio_md = saida
+
+        # Atualiza a descrição no banco central para que exiba traduzido da próxima vez
+        if preview_pt:
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE projetos 
+                    SET readme_preview = ?, ultima_atualizacao = ?
+                    WHERE nome = ? AND estacao = ?
+                """, (preview_pt, datetime.now().isoformat(), nome, estacao))
+                conn.commit()
+                conn.close()
+            except Exception as db_err:
+                print("Erro ao atualizar banco com preview traduzido:", db_err)
+
+        return {
+            "ok": True,
+            "preview": preview_pt,
+            "relatorio": relatorio_md
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "erro": str(e),
+            "relatorio": f"### ⚠️ Falha ao gerar o relatório por IA\n\nErro técnico ao chamar a inteligência artificial central no servidor Contabo: `{e}`"
+        }
 
 # --- ESTAÇÕES ---
 @app.post("/api/estacoes/ping")

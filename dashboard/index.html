@@ -448,9 +448,14 @@ function renderProjetos(lista) {
         <div class="proj-preview">${p.preview}</div>
         <div class="proj-actions">
           <button class="btn-sm ai" onclick="perguntarIA('${p.nome.replace(/'/g,"\\\\'")}')">🤖 Perguntar IA</button>
+          <button class="btn-sm" onclick="verRelatorio('${p.nome.replace(/'/g,"\\\\'")}')" style="background:#2a2d3e; color:var(--text); margin-left:4px;">📋 Relatório</button>
         </div>
       </div>`;
   }).join('');
+}
+
+function verRelatorio(nome) {
+  window.location.href = `projeto.html?nome=${encodeURIComponent(nome)}`;
 }
 
 function filtrarProjetos() {

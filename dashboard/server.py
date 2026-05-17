@@ -149,6 +149,120 @@ def get_projetos():
         ]
 
 
+def gerar_relatorio_local(nome):
+    """Coleta metadados locais de um projeto e chama o backend remoto para gerar relatório por IA."""
+    import socket
+    estacao_local = socket.gethostname()
+    projetos = get_projetos()
+    proj = None
+    
+    for p in projetos:
+        if p["nome"] == nome and p["estacao"] == estacao_local:
+            proj = p
+            break
+            
+    if not proj:
+        for p in projetos:
+            if p["nome"] == nome:
+                proj = p
+                break
+                
+    if not proj:
+        proj = {"nome": nome, "local": "", "estacao": "desconhecida"}
+
+    local_path = proj.get("local", "")
+    readme_content = ""
+    tasks_content = ""
+    git_status = ""
+    git_log = ""
+
+    if local_path and os.path.exists(local_path):
+        for readme_nome in ["README.md", "README_ESTUDIO.md", "STATUS_ESTUDIOHC.md", "readme.md"]:
+            p_readme = os.path.join(local_path, readme_nome)
+            if os.path.exists(p_readme):
+                try:
+                    with open(p_readme, "r", encoding="utf-8") as f:
+                        readme_content = f.read(4000)
+                    break
+                except Exception:
+                    pass
+                    
+        for task_nome in ["task.md", "todo.md", "tasks.md", "implementation_plan.md"]:
+            p_task = os.path.join(local_path, task_nome)
+            if os.path.exists(p_task):
+                try:
+                    with open(p_task, "r", encoding="utf-8") as f:
+                        tasks_content = f.read(4000)
+                    break
+                except Exception:
+                    pass
+
+        import subprocess
+        try:
+            res = subprocess.run(["git", "status", "--porcelain"], cwd=local_path, capture_output=True, text=True, timeout=5)
+            git_status = res.stdout.strip()
+        except Exception:
+            pass
+
+        try:
+            res = subprocess.run(["git", "log", "-n", "5", "--oneline"], cwd=local_path, capture_output=True, text=True, timeout=5)
+            git_log = res.stdout.strip()
+        except Exception:
+            pass
+
+    CENTRAL_URL = "http://100.64.117.78:8585"
+    payload = {
+        "nome": nome,
+        "readme": readme_content,
+        "git_status": git_status,
+        "git_log": git_log,
+        "estacao": proj.get("estacao", estacao_local),
+        "tasks_content": tasks_content
+    }
+    
+    try:
+        req = urllib.request.Request(
+            f"{CENTRAL_URL}/api/projetos/gerar-relatorio",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print("Erro ao gerar relatório com o servidor central, usando fallback local:", e)
+        import datetime
+        status_geral = "Ativo (Em Desenvolvimento)" if git_status else "Parado / Estável"
+        fallback_rel = f"""# Relatório de Estado — {nome} (Offline Fallback)
+
+> ⚠️ **Aviso:** O servidor central de IA está temporariamente offline. Este relatório básico foi gerado localmente sem enriquecimento de IA.
+
+### 📊 Estado Geral
+* **Status:** {status_geral}
+* **Estação:** {proj.get('estacao', estacao_local)}
+* **Diretório:** `{local_path or 'Não configurado'}`
+* **Última Atualização:** {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
+
+### 🔄 Ações Recentes (Git Log)
+```text
+{git_log or 'Nenhum commit recente encontrado.'}
+```
+
+### ⚠️ Arquivos Modificados (Git Status)
+```text
+{git_status or 'Nenhum arquivo modificado.'}
+```
+
+### 📋 Tarefas Pendentes
+{'- Extraído de task.md/todo.md' if tasks_content else '- Nenhuma tarefa documentada.'}
+"""
+        return {
+            "ok": False,
+            "preview": "Servidor central offline.",
+            "relatorio": fallback_rel
+        }
+
+
 def get_agenda():
     """Carrega agenda.json."""
     if not os.path.exists(AGENDA_FILE):
@@ -286,6 +400,14 @@ class HubHandler(SimpleHTTPRequestHandler):
                 "hermes": hermes_ok,
                 "porta": PORT
             })
+
+        if path == "/api/projetos/relatorio":
+            query = parse_qs(parsed.query)
+            nome = query.get("nome", [""])[0]
+            if not nome:
+                return self.send_json({"erro": "Nome do projeto não fornecido"}, 400)
+            res = gerar_relatorio_local(nome)
+            return self.send_json(res)
 
         # Serve arquivos estáticos (index.html, etc.)
         return super().do_GET()

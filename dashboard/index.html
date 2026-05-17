@@ -433,15 +433,25 @@ async function carregarProjetos() {
 }
 
 function renderProjetos(lista) {
-  $('proj-grid').innerHTML = lista.map(p => `
-    <div class="proj-card">
-      <div class="proj-nome">${p.nome}</div>
-      <div class="proj-local">${p.local}</div>
-      <div class="proj-preview">${p.preview}</div>
-      <div class="proj-actions">
-        <button class="btn-sm ai" onclick="perguntarIA('${p.nome.replace(/'/g,"\\\\'")}')">🤖 Perguntar IA</button>
-      </div>
-    </div>`).join('');
+  $('proj-grid').innerHTML = lista.map(p => {
+    let badge = "";
+    if (p.local.includes('/home/deploy')) {
+      badge = `<span style="color:var(--accent2); font-weight:bold; font-size:0.85em; margin-right:6px;">[☁️ Servidor]</span>`;
+    } else if (p.local.includes('/home/helcio')) {
+      badge = `<span style="color:var(--yellow); font-weight:bold; font-size:0.85em; margin-right:6px;">[💻 Estação]</span>`;
+    } else {
+      badge = `<span style="color:var(--muted); font-weight:bold; font-size:0.85em; margin-right:6px;">[📁 Remoto]</span>`;
+    }
+    return `
+      <div class="proj-card">
+        <div class="proj-nome">${badge}${p.nome}</div>
+        <div class="proj-local">${p.local}</div>
+        <div class="proj-preview">${p.preview}</div>
+        <div class="proj-actions">
+          <button class="btn-sm ai" onclick="perguntarIA('${p.nome.replace(/'/g,"\\\\'")}')">🤖 Perguntar IA</button>
+        </div>
+      </div>`;
+  }).join('');
 }
 
 function filtrarProjetos() {

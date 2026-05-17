@@ -76,7 +76,8 @@ textarea{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(
   <span>🎙️</span>
   <h1>EstudioHC Hub</h1>
   <div class="status-bar">
-    <span><span class="status-dot" id="kobold-dot"></span>KoboldCpp</span>
+    <span id="station-badge" style="background:var(--border);padding:4px 10px;border-radius:8px;font-weight:700;font-size:12px;color:var(--accent2)">📍 Detectando...</span>
+    <span><span class="status-dot" id="kobold-dot"></span>GPU Local</span>
     <span id="data-atual"></span>
   </div>
 </header>
@@ -160,16 +161,35 @@ textarea{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(
 
 </main>
 <script>
-const API = 'http://localhost:8585/api';
+const API = window.location.origin + '/api';
 let diaAtual = new Date();
 let diaSelecionado = new Date();
 let agenda = [];
 let todosDiarios = [];
 let todosProjetos = [];
 let diarioAtualConteudo = '';
+let estacao = "central";
 
 // ── Utilitários ────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
+
+// ── Estação ───────────────────────────────────────────────────
+function initEstacao() {
+  if (localStorage.getItem("estudiohc_estacao")) {
+    estacao = localStorage.getItem("estudiohc_estacao");
+  } else {
+    let hostNameFriendly = prompt("Identifique esta estação de trabalho (ex: helcio-x99-b, notebook):", "helcio-x99-b");
+    if (hostNameFriendly) {
+      estacao = hostNameFriendly.trim();
+      localStorage.setItem("estudiohc_estacao", estacao);
+    }
+  }
+  $('station-badge').textContent = `📍 ${estacao}`;
+  
+  // Registra a presença da estação no servidor central
+  fetch(`${API}/estacoes/ping?hostname=${encodeURIComponent(estacao)}&ip=${encodeURIComponent(window.location.hostname)}`, { method: 'POST' })
+    .catch(err => console.log("Erro ao registrar ping da estação:", err));
+}
 
 function tab(nome, btn) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -187,11 +207,57 @@ function formatarData(d) {
 // ── Status ─────────────────────────────────────────────────────
 async function verificarStatus() {
   try {
-    const r = await fetch(`${API}/status`);
-    const d = await r.json();
+    const r = await fetch("http://localhost:11434/v1/models", { timeout: 2000 });
     const dot = $('kobold-dot');
-    dot.classList.toggle('online', d.koboldcpp);
-  } catch(e) {}
+    dot.classList.toggle('online', r.ok);
+  } catch(e) {
+    $('kobold-dot').classList.remove('online');
+  }
+}
+
+// ── IA Chat Helper (Híbrido) ───────────────────────────────────
+async function chamarIA(mensagem, contexto = "") {
+  // 1. Tenta o Hermes Agent (Nuvem) no Servidor primeiro
+  try {
+    const r = await fetch(`${API}/hermes`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({mensagem, contexto})
+    });
+    if (r.ok) {
+      const d = await r.json();
+      if (d.resposta && !d.resposta.includes("Falha ao chamar Hermes")) {
+        return { resposta: d.resposta, agente: "hermes" };
+      }
+    }
+  } catch(e) {
+    console.log("Hermes indisponível, tentando GPU Local...");
+  }
+  
+  // 2. Fallback: KoboldCpp local na GPU da estação física
+  try {
+    const r = await fetch(`http://localhost:11434/v1/chat/completions`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model: "koboldcpp",
+        messages: [
+          {"role": "system", "content": `Você é um assistente pessoal do EstudioHC. Responda sempre em português de forma concisa e útil.${contexto ? ' Contexto: ' + contexto : ''}`},
+          {"role": "user", "content": mensagem}
+        ],
+        max_tokens: 800,
+        temperature: 0.7
+      })
+    });
+    if (r.ok) {
+      const d = await r.json();
+      return { resposta: d.choices[0].message.content, agente: "koboldcpp" };
+    }
+  } catch(e) {
+    console.log("KoboldCpp offline:", e);
+  }
+  
+  return { erro: "Ambos os agentes (Hermes Nuvem e KoboldCpp GPU) estão indisponíveis no momento." };
 }
 
 // ── Calendário ─────────────────────────────────────────────────
@@ -267,7 +333,7 @@ function adicionarEvento() {
   const titulo = $('ev-titulo').value.trim();
   if(!titulo) return;
   const dataStr = diaSelecionado.toISOString().split('T')[0];
-  agenda.push({id: Date.now().toString(), data: dataStr, hora, titulo});
+  agenda.push({id: Date.now().toString(), data: dataStr, hora, titulo, estacao});
   $('ev-titulo').value = '';
   salvarAgenda();
   renderCalendario();
@@ -318,13 +384,12 @@ async function resumirDiario() {
   $('ai-resumo').textContent = '✨ Gerando resumo com IA...';
   $('ai-resumo').classList.add('visible');
   const trecho = diarioAtualConteudo.slice(0, 1500);
-  const r = await fetch(`${API}/kobold`, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({mensagem: `Faça um resumo conciso e organizado deste diário de trabalho:\n\n${trecho}`})
-  });
-  const d = await r.json();
-  $('ai-resumo').textContent = d.resposta || d.erro;
+  const d = await chamarIA(`Faça um resumo conciso e organizado deste diário de trabalho:\n\n${trecho}`);
+  if (d.resposta) {
+    $('ai-resumo').innerHTML = (d.agente === 'koboldcpp' ? '<small style="color:var(--yellow)">⚡ [GPU Local] </small><br>' : '<small style="color:var(--accent2)">☁️ [Hermes Cloud] </small><br>') + d.resposta.replace(/\n/g, '<br>');
+  } else {
+    $('ai-resumo').textContent = '❌ ' + d.erro;
+  }
 }
 
 async function adicionarNota() {
@@ -333,10 +398,10 @@ async function adicionarNota() {
   await fetch(`${API}/nota`, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({texto})
+    body: JSON.stringify({texto, estacao})
   });
   $('nota-texto').value = '';
-  alert('✅ Nota salva no diário de hoje!');
+  alert('✅ Nota salva no diário central de hoje!');
   todosDiarios = [];
 }
 
@@ -388,22 +453,19 @@ async function enviarChat() {
   input.value = '';
   addMsg(texto, 'user');
   const loading = addMsg('⏳ Pensando...', 'ai loading');
-  try {
-    const r = await fetch(`${API}/kobold`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({mensagem: texto})
-    });
-    const d = await r.json();
-    loading.className = 'msg ai';
-    loading.textContent = d.resposta || d.erro;
-  } catch(e) {
-    loading.textContent = '❌ KoboldCpp offline. Inicie o serviço.';
+  
+  const d = await chamarIA(texto);
+  loading.className = 'msg ai';
+  if (d.resposta) {
+    loading.innerHTML = (d.agente === 'koboldcpp' ? '<small style="color:var(--yellow)">⚡ [GPU Local]</small><br>' : '<small style="color:var(--accent2)">☁️ [Hermes Cloud]</small><br>') + d.resposta.replace(/\n/g, '<br>');
+  } else {
+    loading.textContent = '❌ ' + d.erro;
   }
 }
 
 // ── Init ────────────────────────────────────────────────────────
 $('data-atual').textContent = new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});
+initEstacao();
 verificarStatus();
 setInterval(verificarStatus, 10000);
 carregarAgenda();

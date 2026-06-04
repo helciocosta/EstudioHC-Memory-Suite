@@ -1,8 +1,24 @@
 # 🎙️ EstudioHC Memory Suite & Hub Central
 
-Bem-vindo ao **EstudioHC Memory Suite**, a infraestrutura de contexto e persistência de memória centralizada projetada especificamente para o ecossistema de agentes de IA (**Gemini, Antigravity, Hermes Agent, Vibe**) de **Helcio O. Costa**.
+Bem-vindo ao **EstudioHC Memory Suite**, a infraestrutura de contexto e persistência de memória centralizada projetada especificamente para o ecossistema de agentes de IA (**Hermes Agent, Claude Portable, OpenCloud, Modelos Locais**) de **Helcio O. Costa**.
 
-Este ecossistema unifica a memória de trabalho, tarefas pendentes, notas de diário e agenda de compromissos físicas, sincronizando-as de forma inteligente entre múltiplas estações de trabalho locais (`helcio-x99-b`, `amd-estudio-c2`, `estudio-x79`) e o servidor central de nuvem **Contabo** por meio de uma VPN segura **Tailscale**.
+Este ecossistema unifica a memória de trabalho, tarefas pendentes, notas de diário e agenda de compromissos físicas, sincronizando-as de forma inteligente entre múltiplas estações de trabalho locais e o servidor central de nuvem **Contabo** por meio de uma VPN segura **Tailscale**.
+
+## 🎯 Visão Centralizada
+
+O **Servidor Contabo (100.64.117.78)** atua como o cérebro central e projeto orquestrador do ecossistema EstudioHC, fornecendo:
+
+- **Memória Persistente MCP** (porta 5050): Armazenamento permanente de fatos, contexto, estado dos agentes e histórico de desenvolvimento
+- **Hub de Visualização** (porta 8585): Interface web premium para visualização de agenda em tempo real, status dos projetos, diários de trabalho e chat de IA integrado
+- **Fonte Única de Verdade do Stack**: Todas as estações de trabalho são automaticamente alimentadas com:
+  - Qual projeto ativo estamos trabalhando atualmente
+  - Agenda unificada de compromissos e marcos importantes
+  - Estado atual de todos os projetos do ecossistema
+  - Notificações de atualizações e mudanças críticas
+  - Documentação e especificações técnicas vigentes
+- **Sincronização Automática via Tailscale**: Garante que independentemente da estação onde você trabalha (helcio-x99-b, amd-estudio-c2, estudio-x79, ou qualquer nova estação), você tenha conhecimento completo e atualizado do ecossistema
+
+Cada desenvolvedor/equipe possui consciência completa e em tempo real da situação real do stack, agenda, projetos e atualizações, garantindo continuidade perfeita, colaboração eficaz e eliminação de informações desatualizadas.
 
 ---
 
@@ -41,8 +57,9 @@ Roda localmente em cada estação de trabalho para fornecer uma experiência vis
 - **Porta:** `8585` (Acesso via `http://localhost:8585`).
 - **Serviço Systemd:** `estudiohc-hub.service` local.
 - **Destaques:** 
-  * Integração nativa com o **Hermes Agent** via OpenRouter com fallback automático e silencioso para o **KoboldCpp local** (porta `11434` / Qwen3-1.7B) se a máquina estiver sem internet ou com rate-limit.
+  * Integração nativa com o **Hermes Agent** via OpenRouter com fallback automático e silencioso para o **Claude Portable** ou **modelos locais** (via OpenCloud ou similar) quando necessário.
   * Diário diário de trabalho automatizado em markdown sincronizado com a home central.
+  * Exibe em tempo real: projeto ativo no qual estamos trabalhando, agenda unificada de compromissos, status de todos os projetos do ecossistema e notificações de atualizações e mudanças importantes.
 
 ### 3. A Central de Comando CLI (`/cli`)
 O utilitário `/usr/local/bin/estudio` é a interface de terminal que atua como ponto de partida diário.
@@ -81,22 +98,14 @@ sudo chmod +x /usr/local/bin/estudio
 
 ## 🤖 Integração com Agentes de IA
 
-### No Gemini CLI / VS Code IDE Companion
-Adicione a suíte de persistência como servidor MCP no arquivo `~/.gemini/settings.json`:
-```json
-"mcpServers": {
-  "estudiohc-memory": {
-    "command": "python3",
-    "args": ["/home/helcio/Apps/EstudioHC-Memory-Suite/server/mcp_stdio_server.py"]
-  }
-}
-```
+O ecossistema EstudioHC prioriza uma abordagem **Python-first** e foca nos seguintes agentes de IA, integrados via MCP ou interfaces padronizadas:
 
-### No Vibe CLI
-Configure o conector STDIO no arquivo de configurações `~/.vibe/config.toml`:
-```toml
-mcp_servers = ["python3 /home/helcio/Apps/EstudioHC-Memory-Suite/server/mcp_stdio_server.py"]
-```
+- **Hermes Agent**: Agente principal de raciocínio e codificação (via OpenRouter)
+- **Claude Portable**: Agente alternativo para tarefas que beneficiam do Claude (disponível localmente como aplicativo portátil)
+- **OpenCloud**: Interface para orquestração de modelos locais quando necessária privacidade, autonomia ou funcionamento offline
+- **Modelos Locais**: Utilizados via ferramentas como Ollama ou similares para tarefas específicas (ex: geração de código, análise de documentos, embeddings)
+
+*Note: O antigravity-awesome-skills foi descontinuado; focamos em manter e melhorar os agentes acima mencionados, que são diretamente integrados ao fluxo de trabalho via MCP ou interfaces locais.*
 
 ---
 *Documentação atualizada e auditada por Antigravity em 2026-05-17.*

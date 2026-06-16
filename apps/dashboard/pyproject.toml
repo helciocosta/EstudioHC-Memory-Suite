@@ -1,0 +1,22 @@
+[project]
+name = "estudiohc-dashboard"
+version = "3.0.0"
+description = "EstudioHC Dashboard Web UI"
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "httpx>=0.28.0",
+]
+
+[project.scripts]
+estudiohc-dashboard = "src:main"
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["src*"]

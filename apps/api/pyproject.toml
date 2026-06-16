@@ -1,0 +1,28 @@
+[project]
+name = "estudiohc-api"
+version = "3.0.0"
+description = "EstudioHC Central Memory & Context API"
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "aiosqlite>=0.20.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "python-multipart>=0.0.18",
+    "sse-starlette>=2.2.1",
+]
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["src*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.ini"]

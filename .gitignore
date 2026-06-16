@@ -1,7 +1,6 @@
-# Byte-compiled / optimized / DLL files
+# Byte-compiled
 __pycache__/
 *.py[cod]
-*$py.class
 
 # Environments
 .env
@@ -10,14 +9,29 @@ env/
 venv/
 mcp_env/
 
-# Databases
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
 *.db
 *.sqlite
+data/
 
 # Logs
 *.log
 
-# SillyTavern
-chats/
-public/chats/
-data/default-user/chats/
+# Docker
+.docker/
+
+# Temp
+tmp/
+dist/
+*.egg-info/
+
+# CLI cache
+.estudio_cache/

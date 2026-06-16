@@ -1,189 +1,293 @@
 # 🧠 EstudioHC — Status do Projeto Central
-**Última atualização:** 2026-05-17 19:15 BRT  
-**Estação de origem:** helcio-x99-b (PC Casa/Estúdio)  
-**Tailscale local:** 100.122.75.73
+
+**Última atualização:** 2026-06-16  
+**Responsável:** deploy@vmi2968998 (Contabo)  
+**Repositório:** `git@github.com:helciocosta/EstudioHC-Memory-Suite.git`
 
 ---
 
-## 🎯 Objetivo do Projeto
+## 🎯 Meta Principal
 
-Transformar o **servidor Contabo** no **cérebro central** do EstudioHC:
-- Agenda, notas, diários e projetos unificados e acessíveis de qualquer estação.
-- Cada estação (PC Casa, Trabalho, Loja) sincroniza com o servidor ao ligar.
-- Interface via EstudioHC Hub (porta 8585 local) que lê/escreve no servidor central.
-- Estações identificadas pelo hostname do sistema.
+**Servir como cérebro centralizado** do ecossistema de AI e produtividade de Helcio O. Costa.
+
+Unificar **memória de agentes AI, agenda, notas/diários, projetos, tarefas e estações de trabalho** em um único banco de dados central acessível via Tailscale de qualquer estação.
 
 ---
 
 ## 🖥️ Inventário de Estações
 
-| Estação | Hostname | Tailscale IP | Status |
-|---------|----------|--------------|--------|
-| PC Casa / Estúdio | helcio-x99-b | 100.122.75.73 | Online |
-| Workstation AMD | amd-estudio-c2 | 100.64.211.14 | Offline |
-| PC Trabalho/Loja | estudio-x79 | 100.92.94.52 | Offline |
-| Servidor Central | vmi2968998 | 100.64.117.78 | Online |
+| Estação | Hostname | Tailscale IP | Sistema | Status |
+|---------|----------|--------------|---------|--------|
+| Servidor Central | vmi2968998 | 100.64.117.78 | Ubuntu 24.04 | ✅ Online |
+| PC Casa / Estúdio | helcio-x99-b | 100.122.75.73 | Linux Mint 22 | ✅ Online |
+| Workstation AMD | amd-estudio-c2 | 100.64.211.14 | — | ❌ Offline |
+| PC Trabalho/Loja | estudio-x79 | 100.92.94.52 | — | ❌ Offline |
 
 ---
 
-## 📦 Stack EstudioHC (o que entra no projeto central)
+## 🏗️ Arquitetura Atual (v3.0)
 
-| Componente | Localização | Status |
-|-----------|-------------|--------|
-| EstudioHC Hub (interface web local) | /home/helcio/Apps/EstudioHC-Memory-Suite/dashboard/ | Rodando porta 8585 |
-| EstudioHC-Memory-Suite (MCP memória) | /home/deploy/Apps/EstudioHC-Memory-Suite/ | ATIVO (porta 5050) |
-| Central API (sincronização) | /home/deploy/Apps/EstudioHC-Memory-Suite/server/ | Não existe ainda (Porta 8586) |
-| KoboldCpp (IA local fallback) | Serviço systemd helcio-x99-b | Qwen3 1.7B porta 11434 (Online) |
-| Hermes Agent v0.14.0 | /home/helcio/.hermes/ | Nemotron 120B via OpenRouter (Online) |
+```
+EstudioHC-Memory-Suite/
+├── apps/
+│   ├── api/                          → FastAPI Central (porta 5050)
+│   │   ├── src/main.py               → App principal (FastAPI)
+│   │   ├── src/config.py             → Settings via .env
+│   │   ├── src/database.py           → SQLAlchemy async + init_db
+│   │   ├── src/models/               → 7 modelos ORM
+│   │   │   ├── agent_memory.py       → Memória persistente de agentes
+│   │   │   ├── agenda.py             → Eventos de agenda
+│   │   │   ├── projetos.py           → Projetos mapeados
+│   │   │   ├── tarefas.py            → Tarefas por projeto
+│   │   │   ├── notas.py              → Notas/diário central
+│   │   │   ├── estacoes.py           → Registro de estações
+│   │   │   └── resumos_diarios.py    → Cache de resumos de IA
+│   │   ├── src/schemas/              → Schemas Pydantic v2
+│   │   ├── src/routers/              → 7 routers modulares
+│   │   │   ├── memory.py             → /remember, /recall
+│   │   │   ├── agenda.py             → /api/agenda
+│   │   │   ├── notas.py              → /api/diarios, /api/nota
+│   │   │   ├── projetos.py           → /api/projetos, /sync, /relatorio
+│   │   │   ├── estacoes.py           → /api/estacoes/ping
+│   │   │   ├── hermes.py             → /api/hermes (chat IA)
+│   │   │   └── status.py             → /api/status, /api/status_md
+│   │   ├── alembic/                  → Migrations versionadas
+│   │   ├── Dockerfile
+│   │   └── pyproject.toml            → Python packaging
+│   ├── mcp-stdio/                    → MCP stdio server (agentes locais)
+│   │   └── Dockerfile
+│   └── dashboard/                    → Web UI (porta 8585)
+│       ├── static/
+│       │   ├── index.html            → SPA (agenda, diário, projetos, chat)
+│       │   └── projeto.html          → Visualizador de relatórios
+│       ├── src/__init__.py           → FastAPI + proxy para API
+│       ├── Dockerfile
+│       └── pyproject.toml
+├── cli/
+│   └── estudio                       → Script de status do terminal
+├── docker-compose.yml                → api + dashboard
+├── data/
+│   └── estudiohc.db                  → SQLite (persistente)
+├── .env.example
+├── .gitignore
+└── README.md
+```
 
-### Projetos FORA do stack EstudioHC (não sincronizar):
-- protocolo-final / novo_protocolo + reversa: Sistema CGDOC, stack .NET 8 + MariaDB independente
+### Stack Tecnológica
+
+| Componente | Tecnologia | Versão |
+|-----------|------------|--------|
+| API Server | FastAPI + Uvicorn | 0.136+ / 0.46+ |
+| ORM | SQLAlchemy 2.0 (async) | 2.0+ |
+| Validação | Pydantic v2 | 2.13+ |
+| Migrations | Alembic | — |
+| Database | SQLite (aiosqlite) | — |
+| Frontend | HTML5 + Vanilla CSS/JS | — |
+| Container | Docker Compose | — |
+| Rede | Tailscale VPN | 1.98+ |
+| IA Cloud | Hermes CLI (OpenRouter) | — |
+| IA Local | KoboldCpp (Qwen3 1.7B) | — |
 
 ---
 
-## Projetos EstudioHC para gestão central
+## 📡 Endpoints da API
 
-| Projeto | Descrição | Prioridade |
-|---------|-----------|------------|
-| EstudioHC-Memory-Suite | Contexto, memória MCP, API central e Dashboard | Alta |
-| pc_local_config | DNA de configuração das estações | Média |
-| antigravity-awesome-skills | Biblioteca de skills para agentes | Média |
+### Rotas Originais (MCP - backward compatible)
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| POST | `/remember` | Salva memória de agente |
+| GET | `/recall/{project}` | Recupera memórias recentes |
+| GET | `/status/{project}` | Status de tarefas do projeto |
 
----
-
-## O que já foi feito (sessão 2026-05-17)
-
-1. **Limpeza Geral de Redundâncias e Duplicatas:**
-   * Deletadas as pastas duplicadas `agenticSeek_temp1` e `agenticSeek_temp2` no PC local e `server-setup-contabo01` no servidor Contabo.
-   * Consolidado o antigo `EstudioHC-Hub` avulso para a subpasta `dashboard/` de `EstudioHC-Memory-Suite`. A pasta legada `EstudioHC-Hub` foi totalmente deletada após o backup bem-sucedido.
-2. **Caminhos Dinâmicos de SQLite:**
-   * Atualizados os scripts de inicialização do SQLite em `mcp_server.py` e `mcp_stdio_server.py` para usar `os.path.expanduser("~/Apps/EstudioHC-Memory-Suite/server/estudiohc_memory.db")`. O banco de dados agora roda de forma portável tanto no servidor Contabo quanto em qualquer estação local.
-3. **Implantação de Serviços Systemd:**
-   * Serviço local `/etc/systemd/system/estudiohc-hub.service` atualizado e rodando o backend na nova subpasta `dashboard/`.
-   * Serviço remoto no Contabo `/etc/systemd/system/estudiohc-memory.service` instalado, habilitado e rodando o MCP Memory FastAPI na porta `5050` de forma estável.
-4. **Correção Definitiva do Git Local:**
-   * Criado o `.gitignore` otimizado na home `/home/helcio`, resolvendo o erro fatal de `stat` de arquivos do Google Chrome IndexedDB e acelerando o status do repositório em 100x.
-5. **Auditoria Funcional 100% Concluída:**
-   * **Conectividade:** Tailscale respondendo a pings em < 0.2ms.
-   * **MCP Memory central (:5050):** Testado via curl com gravação e leitura instantâneas no SQLite central no servidor.
-   * **Painel Local (:8585):** Diários e projetos locais saneados (removendo referências a clones apagados) e carregando sem erros em formato JSON.
-   * **Modelos de IA:** Hermes Agent via OpenRouter online e respondendo em ~3s; KoboldCpp local online e respondendo em ~1s com paridade total de fallback silencioso.
-   * **Mapeamento de Agentes no Servidor:** Inventariado que o servidor não possui executáveis do Hermes ou OpenClaw ativos, servindo estritamente como cérebro centralizado SQLite na porta 5050, mantendo o ambiente limpo.
-   * **CLI `estudio`:** Analisada a latência de ~15.4s do comando local. Mapeado que decorre de 5 acessos SSH sequenciais. Proposta otimização multiplexada.
-
----
-
-## TAREFAS PENDENTES
-
-### FASE 1 — Servidor Contabo — PRIORITÁRIO
-
-- [x] Reativar EstudioHC-Memory-Suite como serviço systemd permanente na porta 5050
-- [ ] Expandir `mcp_server.py` com novas tabelas: `agenda`, `projetos`, `tarefas`, `notas`, `estacoes`
-- [ ] Criar endpoints REST para cada tabela (FastAPI + venv já instalado em `mcp_env`)
-- [ ] Expor nova API na porta 8586
-- [ ] Criar `/etc/systemd/system/estudiohc-central.service`
-
-### FASE 2 — Hub Local (cada estação)
-
-- [ ] Adicionar `CENTRAL_URL = "http://100.64.117.78:8586"` no `server.py`
-- [ ] Adicionar `ESTACAO = socket.gethostname()` para identificação automática
-- [ ] `get_agenda()` -> lê do servidor primeiro, fallback local
-- [ ] `salvar_agenda()` -> grava local + servidor em paralelo
-- [ ] `adicionar_nota()` -> grava local + servidor
-- [ ] `get_projetos()` -> lê do servidor
-- [ ] `/api/status` -> incluir `central_ok: true/false`
-- [ ] `/api/registrar-estacao` -> registra este PC no boot
-
-### FASE 3 — Frontend index.html
-
-- [ ] Chat IA: trocar `/api/kobold` -> `/api/hermes`
-- [ ] Resumir Diario: trocar `/api/kobold` -> `/api/hermes`
-- [ ] Status bar: adicionar dots Hermes + Central (atualmente só mostra KoboldCpp)
-- [ ] Corrigir bug timezone na agenda (toISOString -> data local)
-- [ ] Renomear aba IA Local -> Chat IA
-- [ ] Adicionar indicador de estacao no header
-- [ ] Banner boas-vindas ao abrir: tarefas do dia
-- [ ] Filtro agenda: Todos os PCs vs Esta estacao
+### Rotas da Central API
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| GET | `/api/agenda` | Lista eventos de agenda |
+| POST | `/api/agenda` | Substitui agenda completa |
+| GET | `/api/diarios` | Lista dias com diário |
+| GET | `/api/diario/{data}` | Lê diário completo |
+| POST | `/api/diario/{data}/resumo` | Salva resumo de IA do diário |
+| POST | `/api/nota` | Adiciona nota ao diário de hoje |
+| GET | `/api/projetos` | Lista todos os projetos |
+| POST | `/api/projetos/sync` | Sincroniza projetos de uma estação |
+| GET | `/api/projetos/relatorio` | Gera relatório de IA do projeto |
+| GET | `/api/estacoes` | Lista estações registradas |
+| POST | `/api/estacoes/ping` | Registra heartbeat de estação |
+| POST | `/api/hermes` | Chat com Hermes AI |
+| GET | `/api/status` | Health check do servidor |
+| GET | `/api/status_md` | Retorna STATUS_ESTUDIOHC.md |
+| GET | `/docs` | Swagger UI (documentação interativa) |
+| GET | `/redoc` | Redoc UI |
 
 ---
 
-## Detalhes Técnicos para Retomada
+## 📊 Estado Atual do Banco
 
-### Acesso ao Servidor
-```
-ssh deploy@100.64.117.78    (via Tailscale)
-```
+| Tabela | Colunas | Registros | Status |
+|--------|---------|-----------|--------|
+| `agent_memory` | id, timestamp, agent_name, project, category, content | 1 (teste) | ✅ |
+| `agenda` | id, data, hora, titulo, estacao, descricao, timestamp | 0 | ⚠️ Vazia |
+| `projetos` | id, nome, local_caminho, status, tags, readme_preview, estacao, ultima_atualizacao | 11 (seed) | ✅ |
+| `tarefas` | id, projeto_id, titulo, status, prioridade, data_limite | 0 | ⚠️ Vazia |
+| `notas` | id, estacao, texto, timestamp | 0 | ⚠️ Vazia |
+| `estacoes` | hostname, ip_tailscale, ultimo_ping, status | 0 | ⚠️ Vazia |
+| `resumos_diarios` | data, resumo, agente, timestamp | 0 | ⚠️ Vazia |
 
-### EstudioHC-Memory-Suite no servidor
-```
-Caminho: /home/deploy/Apps/EstudioHC-Memory-Suite/server/
-Arquivo principal: mcp_server.py (FastAPI, Python 3.12)
-Banco de dados: estudiohc_memory.db (SQLite)
-Tabela existente: agent_memory (id, timestamp, agent_name, project, category, content)
-Venv: mcp_env/ (FastAPI já instalado)
-Ativar venv: source mcp_env/bin/activate
-Iniciar servidor: uvicorn mcp_server:app --host 0.0.0.0 --port 5050
-```
+**Banco de dados funcional mas sem dados operacionais — precisa de uso real para ser útil.**
 
-### Hub Local helcio-x99-b
-```
-Serviços:
-  systemctl status estudiohc-hub    (porta 8585)
-  systemctl status koboldcpp        (porta 11434)
+---
 
-Arquivos principais:
-  /home/helcio/Apps/EstudioHC-Memory-Suite/dashboard/server.py    (backend Python)
-  /home/helcio/Apps/EstudioHC-Memory-Suite/dashboard/index.html   (frontend)
-  /home/helcio/Apps/EstudioHC-Memory-Suite/dashboard/agenda.json  (agenda local)
-  /home/helcio/Apps/estudiohc-diario/PROJETOS_STATUS.md
+## 🚦 Status do Servidor
 
-Hermes:
-  Config: ~/.hermes/config.yaml
-  Modelo: nvidia/nemotron-3-super-120b-a12b via OpenRouter
-  Fallback: KoboldCpp local porta 11434
+| Item | Status | Observação |
+|------|--------|------------|
+| API (`apps/api`) | ✅ **Funcional** | Testado — sobe, responde `/api/status`, `/docs` |
+| Dashboard (`apps/dashboard`) | 🟡 **Estrutura pronta** | Proxy para API configurado, precisa de deploy |
+| MCP stdio (`apps/mcp-stdio`) | 🟡 **Código pronto** | Usado por agentes locais, não roda como serviço |
+| Docker Compose | ✅ **Configurado** | `docker compose up -d` sobe api + dashboard |
+| Systemd service | ❌ **Não instalado** | Precisa criar e habilitar o serviço |
+| CLI (`estudio`) | ✅ **Script existente** | Aponta para `100.64.117.78:8585` (dashboard) |
+| Vagas removidas | ✅ | aionui, antigravity, gemini, waveterm |
 
-KoboldCpp:
-  Modelo: /home/helcio/Apps/LocalAI/models/Qwen3-1.7B-Q4_K_M.gguf (1.056 MB)
-  Porta: 11434 (compativel Ollama)
-  GPU: GTX 750 Ti 4GB - modelo cabe todo na VRAM
-  Tempo resposta: ~1.1s
-```
+---
 
-### API Central a implementar (porta 8586)
-```
-POST /api/agenda          salva/atualiza eventos
-GET  /api/agenda          lista eventos (?estacao=all)
-POST /api/nota            salva nota com timestamp e estacao
-GET  /api/notas           lista notas (?estacao=helcio-x99-b)
-GET  /api/projetos        lista projetos EstudioHC com status
-POST /api/projeto         atualiza status de projeto
-POST /api/tarefa          cria tarefa em projeto
-GET  /api/tarefas         lista tarefas (?status=pendente)
-POST /api/estacao/ping    estacao registra presenca ao ligar
-GET  /api/status          health check central
+## 📋 Plano de Ação — O QUE A PRÓXIMA EQUIPE PRECISA FAZER
+
+### 🔴 FASE 0 — URGENTE (colocar no ar AGORA)
+
+- [ ] **Criar serviço systemd** (`/etc/systemd/system/estudiohc-api.service`):
+  ```ini
+  [Unit]
+  Description=EstudioHC Central API
+  After=network.target tailscaled.service
+
+  [Service]
+  Type=simple
+  User=deploy
+  WorkingDirectory=/home/deploy/Apps/EstudioHC-Memory-Suite/apps/api
+  ExecStart=/home/deploy/Apps/EstudioHC-Memory-Suite/apps/api/.venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 5050
+  Restart=always
+  RestartSec=5
+
+  [Install]
+  WantedBy=multi-user.target
+  ```
+- [ ] `sudo systemctl daemon-reload && sudo systemctl enable --now estudiohc-api`
+- [ ] **Verificar:** `curl http://localhost:5050/api/status` → deve retornar 200
+- [ ] **Subir dashboard via Docker ou systemd** similar
+
+### 🟡 FASE 1 — Conectar Estações
+
+- [ ] **Instalar CLI `estudio`** em cada estação local:
+  ```bash
+  sudo cp cli/estudio /usr/local/bin/estudio
+  ```
+- [ ] **Configurar dashboard local** em cada estação (helcio-x99-b, etc):
+  - Clonar repositório
+  - Rodar dashboard apontando para `API_URL=http://100.64.117.78:5050`
+  - Criar serviço systemd `estudiohc-hub` porta 8585
+- [ ] **Registrar estação via API:** `POST /api/estacoes/ping?hostname=helcio-x99-b`
+- [ ] **Sincronizar projetos locais:** `POST /api/projetos/sync` com lista de projetos
+
+### 🟢 FASE 2 — Popular Dados Reais
+
+- [ ] **Inserir agenda real:** eventos, compromissos, prazos via `POST /api/agenda`
+- [ ] **Criar tarefas nos projetos:** `POST /api/tarefas` (endpoint existe no model, falta router)
+- [ ] **Usar diário:** postar notas do dia a dia via `POST /api/nota`
+- [ ] **Configurar Hermes AI:** garantir que `~/.local/bin/hermes` existe e tem chave OpenRouter
+
+### 🔵 FASE 3 — Frontend (index.html)
+
+**Arquivo:** `apps/dashboard/static/index.html`
+
+- [ ] **Chat IA:** trocar `/api/kobold` → `/api/hermes` (nuvem primeiro, fallback local)
+- [ ] **Resumir Diario:** trocar `/api/kobold` → `/api/hermes`
+- [ ] **Status bar:** adicionar dots de Hermes + Central (hoje só mostra KoboldCpp)
+- [ ] **Corrigir bug timezone:** eventos salvos em UTC mas exibidos como local
+- [ ] **Renomear aba** "IA Local" → "Chat IA"
+- [ ] **Adicionar indicador de estação** no header (via `localStorage`)
+- [ ] **Banner de boas-vindas:** tarefas do dia ao abrir
+- [ ] **Filtro agenda:** "Todos os PCs" vs "Esta estação"
+
+### 🟣 FASE 4 — Melhorias e Segurança
+
+- [ ] **Autenticação:** adicionar API Key ou JWT (hoje CORS aberto `*`)
+- [ ] **Endpoint de tarefas:** criar router `tarefas.py` (modelo e schema já existem)
+- [ ] **Testes automatizados:** pytest nos routers
+- [ ] **Rate limiting** no `/api/hermes` (previne abuso)
+- [ ] **Logs rotacionados:** configurar logrotate para logs da API
+- [ ] **Monitoramento:** healthcheck no docker-compose (já configurado)
+- [ ] **Backup automático do SQLite** (cron diário)
+
+---
+
+## 🛠️ Comandos Úteis
+
+```bash
+# Acessar servidor
+ssh deploy@100.64.117.78
+
+# Rodar API manualmente
+cd ~/Apps/EstudioHC-Memory-Suite/apps/api
+source .venv/bin/activate
+uvicorn src.main:app --host 0.0.0.0 --port 5050
+
+# Testar API
+curl http://localhost:5050/api/status
+curl -X POST http://localhost:5050/remember \
+  -H "Content-Type: application/json" \
+  -d '{"agent_name":"test","project":"EstudioHC","content":"hello","category":"task"}'
+
+# Migrations
+cd ~/Apps/EstudioHC-Memory-Suite/apps/api
+alembic upgrade head
+alembic revision --autogenerate -m "descricao"
+
+# Docker
+cd ~/Apps/EstudioHC-Memory-Suite
+docker compose up -d
+docker compose logs -f
+
+# Git
+cd ~/Apps/EstudioHC-Memory-Suite
+git status
+git add . && git commit -m "mensagem" && git push
 ```
 
 ---
 
-## Como retomar de outra estação
+## 🔗 Informações de Rede
 
-1. Verificar Tailscale: `tailscale status`
-2. Ler este arquivo: `ssh deploy@100.64.117.78 "cat /home/deploy/STATUS_ESTUDIOHC.md"`
-3. Verificar servidor: `ssh deploy@100.64.117.78 "systemctl status estudiohc-central 2>/dev/null || echo PARADO"`
-4. Começar pela FASE 1 do plano
-5. Após Fase 1: instalar Hub local na nova estacao apontando para CENTRAL_URL
+| Item | Valor |
+|------|-------|
+| Servidor Tailscale IP | 100.64.117.78 |
+| Hostname | vmi2968998 |
+| Porta API | 5050 |
+| Porta Dashboard | 8585 |
+| Acesso SSH | `ssh deploy@100.64.117.78` |
+| Repositório | `github.com/helciocosta/EstudioHC-Memory-Suite.git` |
+| Branch | `master` |
 
 ---
 
-## Arquitetura da Sincronização
+## 📁 Projetos Relacionados
 
-```
-[Qualquer Estação com Tailscale]        [Contabo - vmi2968998 - Cérebro]
-  EstudioHC Hub :8585              <==> Central API :8586
-  - lê agenda do servidor                - SQLite: estudiohc_central.db
-  - escreve agenda no servidor           - tabelas: agenda, notas, projetos
-  - lê projetos do servidor              - tabelas: tarefas, estacoes
-  - envia notas ao servidor              - MCP Memory Suite :5050
-  Hermes Agent (nuvem)                   - memória de agentes
-  KoboldCpp (fallback local)
-```
+| Projeto | Localização | Descrição |
+|---------|-------------|-----------|
+| **pc_local_config** | `~/Apps/pc_local_config/` | DNA de config do desktop + script update.sh (alimenta esta API) |
+| **Hermes Agent** | `~/.hermes/` | Agente AI principal (OpenRouter, Nemotron 120B) |
+| **KoboldCpp** | systemd local | IA local (Qwen3 1.7B, porta 11434) |
+
+---
+
+## ⚠️ Riscos e Alertas
+
+1. **Zero autenticação** — qualquer um na Tailscale pode acessar/modificar dados
+2. **SQLite não é cluster** — apenas um servidor, sem replicação
+3. **Hermes depende de OpenRouter** — sem internet ou sem crédito, chat quebra
+4. **Dashboard com paths hardcoded** (`/home/helcio/`) — não funciona se executado como deploy
+5. **Banco vazio** — schema ok, mas sem dados úteis até estações conectarem
+
+---
+
+*Documento mantido para coordenação da equipe. Atualizado em 2026-06-16.*

@@ -1,0 +1,48 @@
+services:
+  api:
+    build:
+      context: apps/api
+      dockerfile: Dockerfile
+    container_name: estudiohc-api
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
+    volumes:
+      - ./data:/root/Apps/EstudioHC-Memory-Suite/data
+      - ./apps/dashboard/static:/app/static
+      - ${HOME}/.local/bin/hermes:/usr/local/bin/hermes:ro
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////root/Apps/EstudioHC-Memory-Suite/data/estudiohc.db
+      - CORS_ORIGINS=["*"]
+      - HERMES_CLI=/usr/local/bin/hermes
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5050/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  dashboard:
+    build:
+      context: apps/dashboard
+      dockerfile: Dockerfile
+    container_name: estudiohc-dashboard
+    restart: unless-stopped
+    ports:
+      - "8585:8585"
+    volumes:
+      - ./apps/dashboard/static:/app/static
+    depends_on:
+      - api
+    environment:
+      - PORT=8585
+      - API_URL=http://api:5050
+
+  # MCP stdio runs only when invoked by AI agents (not persistent)
+  # mcp-stdio:
+  #   build:
+  #     context: apps/mcp-stdio
+  #     dockerfile: Dockerfile
+  #   container_name: estudiohc-mcp
+  #   profiles: ["mcp"]
+  #   volumes:
+  #     - ./data:/root/Apps/EstudioHC-Memory-Suite/data

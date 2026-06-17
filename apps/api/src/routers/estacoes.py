@@ -27,11 +27,11 @@ async def estacao_ping(
     row = existing.scalar_one_or_none()
     ts = datetime.now().isoformat()
     if row:
-        row.ip_tailscale = payload.ip
+        row.ip_tailscale = ip
         row.ultimo_ping = ts
         row.status = "online"
     else:
-        db.add(Estacao(hostname=payload.hostname, ip_tailscale=payload.ip, ultimo_ping=ts, status="online"))
+        db.add(Estacao(hostname=hostname, ip_tailscale=ip, ultimo_ping=ts, status="online"))
     await db.commit()
     return {"ok": True}
 

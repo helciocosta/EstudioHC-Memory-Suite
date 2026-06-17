@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-STATIC_DIR = Path(__file__).parent / "static"
+STATIC_DIR = Path(__file__).parent.parent / "static"
 API_URL = os.getenv("API_URL", "http://estudiohc-api:5050")
 
 app = FastAPI(title="EstudioHC Hub", version="3.0.0")

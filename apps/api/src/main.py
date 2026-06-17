@@ -7,7 +7,7 @@ from pathlib import Path
 from .config import settings
 from .database import get_db, init_db
 from .schemas import MemoryEntry
-from .routers import memory, agenda, notas, projetos, estacoes, status, hermes
+from .routers import memory, agenda, notas, projetos, estacoes, status, hermes, tarefas
 
 description = """
 EstudioHC Central API — Cérebro central do ecossistema EstudioHC.
@@ -42,6 +42,7 @@ app.include_router(notas.router)
 app.include_router(projetos.router)
 app.include_router(estacoes.router)
 app.include_router(hermes.router)
+app.include_router(tarefas.router)
 app.include_router(status.router)
 
 

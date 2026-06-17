@@ -77,6 +77,8 @@ textarea{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(
   <h1>EstudioHC Hub</h1>
   <div class="status-bar">
     <span id="station-badge" style="background:var(--border);padding:4px 10px;border-radius:8px;font-weight:700;font-size:12px;color:var(--accent2)">📍 Detectando...</span>
+    <span><span class="status-dot" id="opencode-dot"></span>OpenCode</span>
+    <span><span class="status-dot" id="hermes-dot"></span>Hermes</span>
     <span><span class="status-dot" id="kobold-dot"></span>GPU Local</span>
     <span id="data-atual"></span>
   </div>
@@ -85,7 +87,7 @@ textarea{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(
   <button class="active" onclick="tab('agenda',this)">📅 Agenda</button>
   <button onclick="tab('memoria',this)">🧠 Memória</button>
   <button onclick="tab('projetos',this)">📁 Projetos</button>
-  <button onclick="tab('ia',this)">🤖 IA Local</button>
+  <button onclick="tab('ia',this)">🤖 Chat IA</button>
 </nav>
 <main>
 
@@ -150,7 +152,7 @@ textarea{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(
 <!-- IA LOCAL -->
 <div class="section" id="sec-ia">
   <div class="card">
-    <h2>🤖 Chat — KoboldCpp Local</h2>
+    <h2>🤖 Chat IA — OpenCode (primário) / Hermes (fallback)</h2>
     <div class="chat-box" id="chat-box"></div>
     <div class="chat-input">
       <input type="text" id="chat-input" placeholder="Pergunte algo..." onkeydown="if(event.key==='Enter')enviarChat()">
@@ -207,7 +209,19 @@ function formatarData(d) {
 // ── Status ─────────────────────────────────────────────────────
 async function verificarStatus() {
   try {
-    const r = await fetch("http://localhost:11434/v1/models", { timeout: 2000 });
+    const r = await fetch(`${API}/status`);
+    if (r.ok) {
+      const d = await r.json();
+      const opencodeDot = $('opencode-dot');
+      opencodeDot.classList.toggle('online', d.opencode === true);
+      const hermesDot = $('hermes-dot');
+      hermesDot.classList.toggle('online', d.hermes === true);
+    }
+  } catch(e) {
+    console.log("Status offline:", e);
+  }
+  try {
+    const r = await fetch("http://localhost:11434/v1/models", { signal: AbortSignal.timeout(2000) });
     const dot = $('kobold-dot');
     dot.classList.toggle('online', r.ok);
   } catch(e) {
@@ -217,24 +231,18 @@ async function verificarStatus() {
 
 // ── IA Chat Helper (Híbrido) ───────────────────────────────────
 async function chamarIA(mensagem, contexto = "") {
-  // 1. Tenta o Hermes Agent (Nuvem) no Servidor primeiro
-  try {
-    const r = await fetch(`${API}/hermes`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({mensagem, contexto})
-    });
-    if (r.ok) {
-      const d = await r.json();
-      if (d.resposta && !d.resposta.includes("Falha ao chamar Hermes")) {
-        return { resposta: d.resposta, agente: "hermes" };
-      }
+  const r = await fetch(`${API}/hermes`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({mensagem, contexto})
+  });
+  if (r.ok) {
+    const data = await r.json();
+    if (data.resposta) {
+      return data;
     }
-  } catch(e) {
-    console.log("Hermes indisponível, tentando GPU Local...");
   }
-  
-  // 2. Fallback: KoboldCpp local na GPU da estação física
+
   try {
     const r = await fetch(`http://localhost:11434/v1/chat/completions`, {
       method: 'POST',
@@ -256,8 +264,8 @@ async function chamarIA(mensagem, contexto = "") {
   } catch(e) {
     console.log("KoboldCpp offline:", e);
   }
-  
-  return { erro: "Ambos os agentes (Hermes Nuvem e KoboldCpp GPU) estão indisponíveis no momento." };
+
+  return { erro: "Todos os agentes indisponíveis (OpenCode, Hermes, GPU Local)." };
 }
 
 // ── Calendário ─────────────────────────────────────────────────
@@ -380,7 +388,10 @@ async function abrirDiario(data, el) {
   
   // Se já tiver resumo no cache do banco, exibe de forma instantânea
   if (d.resumo) {
-    $('ai-resumo').innerHTML = (d.agente === 'koboldcpp' ? '<small style="color:var(--yellow)">⚡ [GPU Local] (Cache)</small><br>' : '<small style="color:var(--accent2)">☁️ [Hermes Cloud] (Cache)</small><br>') + d.resumo.replace(/\n/g, '<br>');
+    const agentBadge = d.agente === 'koboldcpp'
+      ? '<small style="color:var(--yellow)">⚡ [GPU Local] (Cache)</small><br>'
+      : `<small style="color:var(--accent2)">☁️ [${d.agente}] (Cache)</small><br>`;
+    $('ai-resumo').innerHTML = agentBadge + d.resumo.replace(/\n/g, '<br>');
     $('ai-resumo').classList.add('visible');
   } else {
     // Caso contrário, executa e salva automaticamente
@@ -395,9 +406,12 @@ async function resumirDiario(dataParam) {
   const trecho = diarioAtualConteudo.slice(0, 1500);
   const d = await chamarIA(`Faça um resumo conciso e organizado deste diário de trabalho:\n\n${trecho}`);
   if (d.resposta) {
-    $('ai-resumo').innerHTML = (d.agente === 'koboldcpp' ? '<small style="color:var(--yellow)">⚡ [GPU Local] </small><br>' : '<small style="color:var(--accent2)">☁️ [Hermes Cloud] </small><br>') + d.resposta.replace(/\n/g, '<br>');
+    const agentLabel = d.agente === 'opencode' ? 'primary' : d.agente === 'hermes' ? 'secondary' : d.agente === 'koboldcpp' ? 'gpu-local' : d.agente;
+    const agentBadge = d.agente === 'koboldcpp'
+      ? '<small style="color:var(--yellow)">⚡ [GPU Local] </small><br>'
+      : `<small style="color:var(--accent2)">☁️ [${agentLabel}] </small><br>`;
+    $('ai-resumo').innerHTML = agentBadge + d.resposta.replace(/\n/g, '<br>');
     
-    // Salva o resumo recém-gerado no cache central
     try {
       await fetch(`${API}/diario/${data}/resumo`, {
         method: 'POST',
@@ -493,7 +507,11 @@ async function enviarChat() {
   const d = await chamarIA(texto);
   loading.className = 'msg ai';
   if (d.resposta) {
-    loading.innerHTML = (d.agente === 'koboldcpp' ? '<small style="color:var(--yellow)">⚡ [GPU Local]</small><br>' : '<small style="color:var(--accent2)">☁️ [Hermes Cloud]</small><br>') + d.resposta.replace(/\n/g, '<br>');
+    const agentLabel = d.agente === 'opencode' ? 'primary' : d.agente === 'hermes' ? 'secondary' : d.agente === 'koboldcpp' ? 'gpu-local' : d.agente;
+    const agentBadge = d.agente === 'koboldcpp'
+      ? '<small style="color:var(--yellow)">⚡ [GPU Local]</small><br>'
+      : `<small style="color:var(--accent2)">☁️ [${agentLabel}]</small><br>`;
+    loading.innerHTML = agentBadge + d.resposta.replace(/\n/g, '<br>');
   } else {
     loading.textContent = '❌ ' + d.erro;
   }

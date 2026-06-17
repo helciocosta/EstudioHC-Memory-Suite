@@ -71,3 +71,18 @@ class ResumoPayload(BaseModel):
 class EstacaoPing(BaseModel):
     hostname: str
     ip: str = "desconhecido"
+
+
+class TarefaCreate(BaseModel):
+    projeto_id: int
+    titulo: str
+    status: str = "pendente"
+    prioridade: str = "media"
+    data_limite: str | None = None
+
+
+class TarefaUpdate(BaseModel):
+    titulo: str | None = None
+    status: str | None = None
+    prioridade: str | None = None
+    data_limite: str | None = None

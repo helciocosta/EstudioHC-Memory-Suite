@@ -12,10 +12,12 @@ router = APIRouter(prefix="/api", tags=["Status"])
 @router.get("/status")
 async def get_status():
     hermes_ok = os.path.exists(settings.HERMES_CLI) or shutil.which("hermes") is not None
+    opencode_ok = shutil.which("opencode") is not None or os.path.exists("/home/deploy/.opencode/bin/opencode")
     return {
         "status": "online",
         "servidor": "central",
         "hermes": hermes_ok,
+        "opencode": opencode_ok,
         "database": "SQLite",
         "timestamp": datetime.now().isoformat(),
     }

@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-LOG_DIR="${LOG_DIR:-/var/log}"
+LOG_DIR="${LOG_DIR:-$HOME/.local/share/estudiohc}"
 LOG_FILE="$LOG_DIR/estudiohc-metrics.csv"
 REPO_DIR="$HOME/Apps/EstudioHC-Memory-Suite"
 BACKUP_LOG="$REPO_DIR/backups/estudiohc-metrics.csv"

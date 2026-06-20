@@ -33,5 +33,8 @@ tmp/
 dist/
 *.egg-info/
 
+# FAISS index (binary state, regenerated on startup)
+.faiss_index.pkl
+
 # CLI cache
 .estudio_cache/

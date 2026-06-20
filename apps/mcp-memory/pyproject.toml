@@ -1,0 +1,21 @@
+[project]
+name = "estudiohc-mcp-memory"
+version = "4.0.0"
+description = "EstudioHC MCP Memory Server — WM, FAISS, RRF, budget enforcement"
+requires-python = ">=3.11"
+
+dependencies = [
+    "mcp>=1.27.0",
+    "httpx>=0.28.0",
+    "numpy>=2.0.0",
+    "sentence-transformers>=3.0.0",
+    "faiss-cpu>=1.9.0",
+]
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["src*"]

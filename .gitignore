@@ -36,5 +36,8 @@ dist/
 # FAISS index (binary state, regenerated on startup)
 .faiss_index.pkl
 
+# Backups (gerados pelos scripts)
+backups/
+
 # CLI cache
 .estudio_cache/

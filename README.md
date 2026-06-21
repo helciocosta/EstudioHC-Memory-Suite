@@ -1,44 +1,69 @@
-# EstudioHC Memory Suite v4.0
+# EstudioHC Memory Suite v4.1
 
-Infraestrutura central de contexto, persistência de memória e inferência local
-para o ecossistema de agentes AI de Helcio O. Costa.
+Infraestrutura centralizada de memória, contexto e inferência local para o
+ecossistema de agentes AI de Helcio O. Costa — com **servidor central
+orquestrando múltiplas estações** na rede Tailscale.
 
 > **Repositório:** `github.com/helciocosta/EstudioHC-Memory-Suite.git`
-> **Stack:** Intel Haswell · CPU-only · Linux · Python 3.12 · llama.cpp b8763
+> **Servidor Central:** `vmi2968998` (Contabo) · Tailscale `100.64.117.78` · API na porta 5050
+> **Stack:** CPU-only · Ubuntu 24.04 · Python 3.12 · llama.cpp b8763
 
 ---
 
 ## Sumário
 
-- [Arquitetura](#arquitetura)
+- [Arquitetura Multi-Máquina](#arquitetura-multi-máquina)
 - [Estrutura do Projeto](#estrutura-do-projeto)
-- [Serviços Systemd](#serviços-systemd)
-- [API REST (porta 5050)](#api-rest-porta-5050)
+- [Serviços por Máquina](#serviços-por-máquina)
+- [API Central (porta 5050)](#api-central-porta-5050)
 - [MCP Memory Server](#mcp-memory-server)
-- [Infraestrutura de Inferência](#infraestrutura-de-inferência)
+- [Infraestrutura de Inferência Local](#infraestrutura-de-inferência-local)
+- [Provisionamento de Novas Estações](#provisionamento-de-novas-estações)
 - [Integrações](#integrações)
 - [Monitoramento](#monitoramento)
 - [Variáveis de Ambiente](#variáveis-de-ambiente)
-- [Plano de Modernização](#plano-de-modernização)
 
 ---
 
-## Arquitetura
+## Arquitetura Multi-Máquina
 
 ```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        REDE TAILSCALE (100.x.x.x)                        │
+│  Conexão direta entre estações e servidor central (p2p, criptografado)  │
+└──────────────────────────────────────────────────────────────────────────┘
+                              │
+       ┌──────────────────────┼──────────────────────┐
+       ▼                      ▼                      ▼
+┌──────────────┐   ┌──────────────┐   ┌──────────────────┐
+│  SERVIDOR    │   │  ESTAÇÃO 1   │   │  ESTAÇÃO N        │
+│  (Contabo)   │   │  (helcio-x99)│   │  (qualquer PC)    │
+│              │   │              │   │                   │
+│  API :5050   │   │  llama.cpp   │   │  llama.cpp        │
+│  SQLite ÚNICO│   │  :11434      │   │  :11434           │
+│  Agenda/Proj │   │  :11435      │   │  :11435           │
+│  Backup diário│  │  MCP → API   │   │  MCP → API        │
+│  Dashboard   │   │  (dev/lab)   │   │  (dev/lab)        │
+└──────────────┘   └──────────────┘   └──────────────────┘
+       ▲                    ▲                    ▲
+       │                    │                    │
+       └───────── MEMORY_API_URL=http://100.64.117.78:5050 ─────────┘
+                          (todas as estações)
+
 ┌──────────────────────────────────────────────────────────────────┐
 │                    WORKING MEMORY (MCP Tools)                     │
 │  Volátil · sessão-escopo · wm_push/pop/list/clear/consolidate    │
 │  Budget: MEMORY_MAX_TOKENS = 2048 · overflow: drop + log         │
 └──────────────────────────┬───────────────────────────────────────┘
-                           │ consolidate()
+                           │ consolidate() → MEMORY_API_URL
                            ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                    LONG-TERM MEMORY (API :5050)                   │
-│  Persistente · FastAPI · SQLite · Decaimento temporal            │
+│            LONG-TERM MEMORY (SERVIDOR CENTRAL :5050)              │
+│  Persistente · FastAPI · SQLite único · Decaimento temporal      │
 │  • 0-30 dias:  peso normal (1.0 → 0.6)                          │
 │  • 30-60 dias: peso reduzido (0.3 → 0.0)                        │
 │  • >60 dias:   arquivada/excluída                                │
+│  • Acessível por todas as estações via Tailscale                 │
 └──────────────────────────┬───────────────────────────────────────┘
                            │ search_memory()
                            ▼
@@ -51,10 +76,11 @@ para o ecossistema de agentes AI de Helcio O. Costa.
                            │ /v1/chat/completions
                            ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                    INFERÊNCIA LOCAL (llama.cpp)                    │
-│  llama-server.service  :11434 → cybersec-assistant-3b             │
-│  llama-server-summarizer :11435 → Qwen3-1.7B                      │
-│  Flash Attention · KV Cache Shift · CPU-only (Haswell)          │
+│                    INFERÊNCIA LOCAL (cada estação)                │
+│  llama-server.service  :11434 → cybersec-assistant-3b            │
+│  llama-server-summarizer :11435 → Qwen3-1.7B                     │
+│  Flash Attention · KV Cache Shift · CPU-only                     │
+│  Cada estação tem seu próprio LLM (sem latência de rede)          │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -99,25 +125,37 @@ EstudioHC-Memory-Suite/
 
 ---
 
-## Serviços Systemd
+## Serviços por Máquina
 
-| Serviço | Porta | Modelo | Contexto | Threads | Função |
-|---|---|---|---|---|---|
-| `llama-server.service` | 11434 (0.0.0.0) | `cybersec-assistant-3b-Q4_K_M` | 4096 | 6 | Inferência principal |
-| `llama-server-summarizer.service` | 11435 (127.0.0.1) | `Qwen3-1.7B-Q4_K_M` | 2048 | 4 | Sumarização de memória |
+### Servidor Central (Contabo — `100.64.117.78`)
 
-Flags comuns a ambos:
+| Serviço | Porta | Função |
+|---|---|---|
+| `estudiohc-api.service` | 5050 (0.0.0.0) | API Central — FastAPI, SQLite único, agenda, projetos, memória |
+| `estudiohc-dashboard.service` | 8585 (0.0.0.0) | Web UI de administração |
+| `llama-server.service` | 11434 (0.0.0.0) | LLM principal (cybersec-assistant-3b) — opcional no servidor |
+| `llama-server-summarizer.service` | 11435 (127.0.0.1) | Sumarizador (Qwen3-1.7B) — opcional no servidor |
+| `estudiohc-backup.timer` | — | Backup diário do SQLite + FAISS às 03:00 |
+| `estudiohc-monitor.timer` | — | Coleta de métricas RAM/CPU/cache a cada 5 min |
+
+### Estações (qualquer PC na Tailscale)
+
+| Serviço | Porta | Função |
+|---|---|---|
+| `llama-server.service` | 11434 (0.0.0.0) | LLM principal — inferência local rápida |
+| `llama-server-summarizer.service` | 11435 (127.0.0.1) | Sumarizador local |
+| MCP memory (STDIO) | — | Conecta ao servidor central via `MEMORY_API_URL` |
+
+> **Nas estações, a API NÃO roda localmente.** O MCP memory aponta para
+> `http://100.64.117.78:5050` (servidor central) via variável de ambiente.
+> Isso garante que agenda, projetos e tarefas sejam compartilhados entre
+> todas as máquinas.
+
+Flags comuns do llama.cpp em todas as máquinas:
 ```
 --flash-attn auto --cache-reuse 256 --keep -1
 --device none --no-kv-offload --cont-batching
 ```
-
-### KV Cache Shift — Ganho Mensurado
-
-| Cenário | Prompt ms | Cached tokens | Ganho |
-|---|---|---|---|
-| Cold start | 662ms | 3 | — |
-| Com cache | 99ms | 25 | **6.7x** |
 
 ---
 
@@ -177,25 +215,69 @@ RRF   = keyword_rank × 0.4 + vector_rank × 0.6
 - FAISS IndexFlatIP (all-MiniLM-L6-v2, dim 384)
 - Budget: `MEMORY_INJECT_TOKENS` (1024) — top-1 sempre incluso
 
-### Integração OpenCode
+### Integração OpenCode (em Estações)
 
-Registrado em `~/.config/opencode/opencode.jsonc`:
+Registrado em `~/.config/opencode/opencode.jsonc`, apontando para o servidor central:
 
 ```json
 {
   "mcp": {
     "memory": {
       "type": "local",
-      "command": ["python3", "/caminho/para/apps/mcp-memory/src/memory_server.py"],
+      "command": [
+        "env",
+        "MEMORY_API_URL=http://100.64.117.78:5050",
+        "python3", "/caminho/para/apps/mcp-memory/src/memory_server.py"
+      ],
       "enabled": true
     }
   }
 }
 ```
 
+> A variável `MEMORY_API_URL` redireciona a persistência para o servidor central.
+> Em estações novas, use `scripts/setup-machine.sh` para configurar automaticamente.
+
 ---
 
-## Infraestrutura de Inferência
+## Provisionamento de Novas Estações
+
+Para adicionar um novo PC à rede, execute o script de provisionamento:
+
+```bash
+# Na máquina nova (deve ter Tailscale instalado e conectado):
+curl -sL https://raw.githubusercontent.com/helciocosta/EstudioHC-Memory-Suite/master/scripts/setup-machine.sh | bash
+```
+
+O script `scripts/setup-machine.sh` faz automaticamente:
+
+| Etapa | Descrição |
+|---|---|
+| ✅ Pré-requisitos | Verifica git, python3, node, tailscale |
+| ✅ Ping servidor | Testa conexão com `100.64.117.78:5050` |
+| ✅ Git clone | Clona ou atualiza o repositório |
+| ✅ Modelos GGUF | Baixa cybersec-assistant-3b e Qwen3-1.7B do Hugging Face |
+| ✅ Python venv | Cria ambiente virtual com MCP, sentence-transformers, FAISS |
+| ✅ OpenCode | Instala opencode-matrixx e config com MCP → servidor central |
+| ✅ Systemd | Cria `llama-server.service` e `llama-server-summarizer.service` |
+| ✅ Registro | Registra a estação na API central (`/api/estacoes/ping`) |
+
+> **Nota:** O binário `msty-llama-server` precisa ser copiado de uma estação já
+> configurada (`rsync -avz user@estacao:~/.config/MstyStudio/llama-cpp/ ...`)
+> pois é um binário proprietário da Msty Studio não disponível publicamente.
+
+### Workflow de Desenvolvimento
+
+```
+1. Estação A inicia tarefa  →  MCP salva no servidor central
+2. Estação B continua       →  MCP lê do servidor central
+3. Código versionado        →  git push/pull (qualquer estação)
+4. Deploy no servidor       →  Quando estiver pronto
+```
+
+Cada estação é um **laboratório de desenvolvimento** com inferência local
+rápida. O servidor central mantém a **fonte única de verdade** para dados
+persistentes (agenda, projetos, tarefas, memória de longo prazo).
 
 ### Migração: KoboldCpp → llama.cpp nativo (2026-06-20)
 
@@ -310,23 +392,20 @@ sudo systemctl restart llama-server-summarizer.service
 ## Variáveis de Ambiente
 
 | Variável | Default | Serviço | Descrição |
-|---|---|---|---|
+|---|---|---|---|---|
 | `MEMORY_MAX_TOKENS` | 2048 | memory-server.py | Budget total da Working Memory |
 | `MEMORY_INJECT_TOKENS` | 1024 | memory-server.py | Budget por chamada de search_memory |
 | `MEMORY_SUMMARIZE_THRESHOLD` | 60 | memory-server.py | Tamanho mínimo (chars) para sumarizar |
 | `MEMORY_MAX_INJECT` | 3 | memory-server.py | Máximo de itens injetados |
 | `MEMORY_DECAY_DAYS` | 30 | memory-server.py | Dias para início do decaimento |
 | `HYBRID_RRF_K` | 60 | memory-server.py | Constante K do RRF ranking |
-| `MEMORY_API_URL` | http://localhost:5050 | memory-server.py | Endpoint de persistência LTM |
+| `MEMORY_API_URL` | `http://100.64.117.78:5050` (estação) | memory-server.py | Endpoint de persistência LTM no servidor central |
+|  | `http://localhost:5050` (servidor) | | |
 | `CUDA_VISIBLE_DEVICES` | "" | systemd services | Força CPU-only |
 
 ---
 
-## Plano de Modernização
+> **Stack concluído.** Consulte [`PLANO_UNIFICACAO.md`](PLANO_UNIFICACAO.md) para o histórico
+> de modernização e [`scripts/setup-machine.sh`](scripts/setup-machine.sh) para provisionar novas estações.
 
-Consulte [`PLANO_UNIFICACAO.md`](PLANO_UNIFICACAO.md) para o roteiro completo
-de unificação, atualização e modernização deste stack.
-
----
-
-*Projeto mantido por Helcio O. Costa. v4.0 — 2026-06-20*
+*Projeto mantido por Helcio O. Costa. v4.1 — 2026-06-21*

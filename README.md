@@ -1,4 +1,4 @@
-# EstudioHC Memory Suite v4.1
+# EstudioHC Memory Suite v4.2
 
 Infraestrutura centralizada de memória, contexto e inferência local para o
 ecossistema de agentes AI de Helcio O. Costa — com **servidor central
@@ -17,6 +17,7 @@ orquestrando múltiplas estações** na rede Tailscale.
 - [Serviços por Máquina](#serviços-por-máquina)
 - [API Central (porta 5050)](#api-central-porta-5050)
 - [MCP Memory Server](#mcp-memory-server)
+- [Local Memory Stack (WAL de Sobrevivência)](#local-memory-stack-wal-de-sobrevivência)
 - [Infraestrutura de Inferência Local](#infraestrutura-de-inferência-local)
 - [Provisionamento de Novas Estações](#provisionamento-de-novas-estações)
 - [Integrações](#integrações)
@@ -111,10 +112,21 @@ EstudioHC-Memory-Suite/
 │       └── pyproject.toml
 ├── cli/
 │   └── estudio                   → CLI de status
+├── config/                        → Configurações locais da estação
+│   ├── skills/
+│   │   └── journal_recovery/
+│   │       └── SKILL.md          → Skill de WAL textual pós-queda
+│   └── tmux/
+│       └── .tmux.conf            → history-limit 50000 + remain-on-exit
 ├── server/
 │   ├── mcp_server.py             → FastAPI hub central (5050)
 │   ├── mcp_stdio_server.py       → MCP stdio legado
 │   └── requirements.txt
+├── scripts/
+│   ├── backup.sh                 → Backup diário SQLite + FAISS
+│   ├── bootstrap-memory-stack.sh → Instala journal_recovery + configs locais
+│   ├── monitor.sh                → Coleta métricas RAM/CPU/cache
+│   └── setup-machine.sh          → Provisionamento completo de estação
 ├── docker-compose.yml            → api + dashboard
 ├── .env.example
 ├── .gitignore
@@ -238,7 +250,59 @@ Registrado em `~/.config/opencode/opencode.jsonc`, apontando para o servidor cen
 > A variável `MEMORY_API_URL` redireciona a persistência para o servidor central.
 > Em estações novas, use `scripts/setup-machine.sh` para configurar automaticamente.
 
----
+
+## Local Memory Stack (WAL de Sobrevivência)
+
+Complemento offline ao MCP Memory Server — um **append-only journal** local
+que preserva o contexto da sessão mesmo em caso de queda de energia.
+
+### Motivação
+
+O MCP Memory Server persiste memória no servidor central (Contabo :5050).
+Se a energia cai durante uma tarefa, o contexto da conversa atual se perde.
+O journal local preenche esta lacuna: cada turno é anexado a um arquivo de
+texto antes do próximo turno começar.
+
+### Componentes
+
+| Componente | Local | Função |
+|---|---|---|
+| `config/skills/journal_recovery/SKILL.md` | `~/.agents/skills/` | Skill do agente que lê o journal na inicialização e faz append a cada turno |
+| `config/tmux/.tmux.conf` | `~/.tmux.conf` | Backup textual bruto via histórico do tmux (50000 linhas) |
+| `.matrixx/journal.md` | `./.matrixx/` ou `/tmp/.matrixx/` | Append log Markdown — atômico, sobrevive a queda |
+| `.matrixx/journal.yaml` | `./.matrixx/` ou `/tmp/.matrixx/` | Structured snapshot para parsing programático |
+
+### Fluxo
+
+```
+Nova sessão → journal_recovery skill lê .matrixx/journal.md
+           → extrai últimas 15 entradas como contexto
+           → agente opera com continuidade
+           → cada turno: append no journal.md (>> atômico)
+           → task complete: memory-auto salva no Qdrant
+           → queda de energia? journal.md sobrevive
+```
+
+### Integração com o restante da Suite
+
+| Camada | Dependência | Função |
+|---|---|---|
+| `journal_recovery` (local) | Nenhuma — funciona offline | WAL textual pós-queda |
+| MCP Memory Server | Servidor central :5050 | Memória remota compartilhada entre estações |
+| `memory-auto` (Qdrant) | Qdrant local | Busca semântica entre sessões |
+
+As três camadas são independentes e complementares.
+
+### Instalação
+
+```bash
+# Na estação já clonada:
+./scripts/bootstrap-memory-stack.sh
+```
+
+O script copia o skill para `~/.agents/skills/`, instala o `.tmux.conf`,
+e cria o diretório `.matrixx/` com os arquivos iniciais.
+
 
 ## Provisionamento de Novas Estações
 
@@ -265,6 +329,13 @@ O script `scripts/setup-machine.sh` faz automaticamente:
 > **Nota:** O binário `msty-llama-server` precisa ser copiado de uma estação já
 > configurada (`rsync -avz user@estacao:~/.config/MstyStudio/llama-cpp/ ...`)
 > pois é um binário proprietário da Msty Studio não disponível publicamente.
+
+> Após o setup-machine.sh, execute também o bootstrap do stack local:
+> ```bash
+> cd ~/Apps/EstudioHC-Memory-Suite && ./scripts/bootstrap-memory-stack.sh
+> ```
+> Isso instala o skill `journal_recovery` e o `.tmux.conf` para proteção
+> contra queda de energia durante sessões do agente.
 
 ### Workflow de Desenvolvimento
 
@@ -406,6 +477,4 @@ sudo systemctl restart llama-server-summarizer.service
 ---
 
 > **Stack concluído.** Consulte [`PLANO_UNIFICACAO.md`](PLANO_UNIFICACAO.md) para o histórico
-> de modernização e [`scripts/setup-machine.sh`](scripts/setup-machine.sh) para provisionar novas estações.
-
-*Projeto mantido por Helcio O. Costa. v4.1 — 2026-06-21*
+*Projeto mantido por Helcio O. Costa. v4.2 — 2026-07-26*

@@ -41,3 +41,6 @@ backups/
 
 # CLI cache
 .estudio_cache/
+
+# Model binaries (GGUF)
+models/

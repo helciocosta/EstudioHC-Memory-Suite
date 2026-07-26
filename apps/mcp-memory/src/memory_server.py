@@ -488,6 +488,8 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=f"Memory API error: {e.response.status_code} - {e.response.text}")]
     except httpx.RequestError as e:
         return [TextContent(type="text", text=f"Memory API unavailable ({MEMORY_API_URL}). Is EstudioHC Memory Suite running? Error: {e}")]
+    except asyncio.TimeoutError:
+        return [TextContent(type="text", text=f"Operation timed out while connecting to Memory API ({MEMORY_API_URL}).")]
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {e}")]
 
@@ -511,7 +513,13 @@ async def rebuild_vector_index():
 
 
 async def main():
-    await rebuild_vector_index()
+    try:
+        await asyncio.wait_for(rebuild_vector_index(), timeout=30)
+    except asyncio.TimeoutError:
+        print("[memory] FAISS rebuild timed out (30s) — vector search disabled. Memory API still works.", file=sys.stderr)
+    except Exception as e:
+        print(f"[memory] FAISS rebuild failed: {e} — vector search disabled. Memory API still works.", file=sys.stderr)
+
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,

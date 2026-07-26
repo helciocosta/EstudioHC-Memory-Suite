@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import pickle
+import threading
 import numpy as np
 
 FAISS_AVAILABLE = False
@@ -9,22 +10,53 @@ MODEL = None
 INDEX = None
 ID_MAP = {}
 NEXT_POS = 0
+_MODEL_LOCK = threading.Lock()
+_MODEL_LOADED = False
 
 INDEX_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".faiss_index.pkl")
 EMBED_DIM = 384
+MODEL_LOAD_TIMEOUT = 30  # seconds
+
+
+def _load_model_sync():
+    """Load sentence-transformer model (blocking, called from thread)."""
+    global MODEL
+    from sentence_transformers import SentenceTransformer
+    MODEL = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
 
 
 def _lazy_load_model():
-    global MODEL
+    global MODEL, _MODEL_LOADED
     if MODEL is not None:
         return True
-    try:
-        from sentence_transformers import SentenceTransformer
-        MODEL = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
-        return True
-    except ImportError:
-        print("[embedder] sentence-transformers not installed", file=sys.stderr)
-        return False
+    if _MODEL_LOADED:
+        return MODEL is not None
+
+    with _MODEL_LOCK:
+        if MODEL is not None:
+            return True
+        if _MODEL_LOADED:
+            return MODEL is not None
+
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            print("[embedder] sentence-transformers not installed", file=sys.stderr)
+            _MODEL_LOADED = True
+            return False
+
+        # Try to load the model with a timeout to prevent hanging on download
+        thread = threading.Thread(target=_load_model_sync, daemon=True)
+        thread.start()
+        thread.join(timeout=MODEL_LOAD_TIMEOUT)
+
+        if thread.is_alive():
+            print(f"[embedder] Model load timed out after {MODEL_LOAD_TIMEOUT}s — download may be slow or blocked. Vector search disabled.", file=sys.stderr)
+            _MODEL_LOADED = True
+            return False
+
+        _MODEL_LOADED = True
+        return MODEL is not None
 
 
 def _lazy_load_faiss():

@@ -1,6 +1,6 @@
 [project]
 name = "estudiohc-mcp-memory"
-version = "4.0.0"
+version = "4.1.0"
 description = "EstudioHC MCP Memory Server — WM, FAISS, RRF, budget enforcement"
 requires-python = ">=3.11"
 

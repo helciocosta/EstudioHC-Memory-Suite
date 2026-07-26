@@ -227,6 +227,21 @@ RRF   = keyword_rank × 0.4 + vector_rank × 0.6
 - FAISS IndexFlatIP (all-MiniLM-L6-v2, dim 384)
 - Budget: `MEMORY_INJECT_TOKENS` (1024) — top-1 sempre incluso
 
+### Resiliência e Timeouts
+
+O MCP Memory Server incorpora proteções contra falhas de inicialização
+para garantir que o servidor nunca bloqueie o cliente (OpenCode):
+
+| Camada | Timeout | Comportamento em Falha |
+|---|---|---|
+| **Modelo de Embeddings** (`embedder.py`) | 30s | `SentenceTransformer("all-MiniLM-L6-v2")` é carregado em thread separada. Se o download do HuggingFace exceder 30s, o modelo é abortado e a busca vetorial (FAISS) é desabilitada. A memória API (keyword) continua funcionando. |
+| **FAISS Rebuild** (`memory_server.py:main()`) | 30s | `asyncio.wait_for()` no startup. Se o rebuild exceder 30s (ex.: modelo não disponível, API central offline), o servidor MCP **ainda inicializa** normalmente — apenas vetor search fica temporariamente indisponível. |
+| **API Central** (`handle_call_tool`) | 10s (httpx) | `asyncio.TimeoutError` capturado e retornado como mensagem de texto ao cliente, sem crash. |
+
+> **Efeito colateral:** Se o modelo de embeddings não carregar, o `search_memory`
+> opera apenas com ranking por keyword (recência + matching textual). O registro
+> `[embedder] Model load timed out` aparece no stderr do servidor.
+
 ### Integração OpenCode (em Estações)
 
 Registrado em `~/.config/opencode/opencode.jsonc`, apontando para o servidor central:
@@ -477,4 +492,6 @@ sudo systemctl restart llama-server-summarizer.service
 ---
 
 > **Stack concluído.** Consulte [`PLANO_UNIFICACAO.md`](PLANO_UNIFICACAO.md) para o histórico
+> de modernização.
+
 *Projeto mantido por Helcio O. Costa. v4.2 — 2026-07-26*

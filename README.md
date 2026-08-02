@@ -286,6 +286,7 @@ Versão 3.0.0 · autenticação opcional por API Key (ver [Autenticação](#aute
 | POST | `/api/projetos/gerar-relatorio` | Relatório IA do projeto |
 | GET | `/api/estacoes` | Lista estações |
 | POST | `/api/estacoes/ping` | Heartbeat de estação |
+| POST | `/api/estacoes/rotacionar` | Roda a chave da estação autenticada — retorna `{"chave":"nova"}` |
 | POST | `/api/hermes` | Chat com IA (OpenCode → Hermes) — com rate limit |
 | GET | `/api/tarefas` | Lista tarefas |
 | POST | `/api/tarefas` | Cria tarefa |
@@ -731,6 +732,18 @@ curl -s http://100.64.117.78:5050/api/status
 ## Autenticação e Rate Limiting
 
 Implementado em `apps/api/src/security.py` e aplicado em `apps/api/src/main.py`.
+
+### TLS interno (Tailscale)
+
+A API central em `:5050` serve **HTTPS** com certificado auto-assinado
+(`/etc/estudiohc/ssl/estudiohc.crt`), recusando HTTP plaintext. Clientes
+(`memory_server.py`, `setup-machine.sh`, curl) usam `https://...` com `-k`/`verify=False`.
+
+> ⚠️ **Aviso MITM:** como o certificado não é validado contra uma CA (auto-assinado),
+> um nó comprometido dentro do tailnet poderia, em teoria, interceptar a conexão
+> (o TLS de fato ocorre, mas sem validação da identidade do servidor). Para 10/10
+> esta é a prática esperada em rede Tailscale segura; o roadmap (Tailscale HTTPS +
+> cert CA real) removeria este resíduo quando habilitado na conta.
 
 ### API Key opcional
 

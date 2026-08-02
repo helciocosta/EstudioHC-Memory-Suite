@@ -16,7 +16,7 @@ from summarizer import summarize as llm_summarize
 import embedder as vec_store
 import chroma_client as chroma
 
-MEMORY_API_URL = os.getenv("MEMORY_API_URL", "http://localhost:5050")
+MEMORY_API_URL = os.getenv("MEMORY_API_URL", "https://127.0.0.1:5050")
 MEMORY_API_KEY = os.getenv("MEMORY_API_KEY", "")
 AGENT_NAME = os.getenv("AGENT_NAME", "opencode")
 SUMMARIZE_THRESHOLD = int(os.getenv("MEMORY_SUMMARIZE_THRESHOLD", "60"))
@@ -152,7 +152,7 @@ async def call_api(method: str, path: str, **kwargs):
     headers = kwargs.pop("headers", {})
     if MEMORY_API_KEY:
         headers["X-API-Key"] = MEMORY_API_KEY
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, verify=False) as client:
         resp = await client.request(method, f"{MEMORY_API_URL}{path}", headers=headers, **kwargs)
         resp.raise_for_status()
         return resp.json()

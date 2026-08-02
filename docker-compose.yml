@@ -19,6 +19,7 @@ services:
       - ./data:/root/Apps/EstudioHC-Memory-Suite/data
       - ./apps/dashboard/static:/app/static
       - ${HOME}/.local/bin/hermes:/usr/local/bin/hermes:ro
+      - /etc/estudiohc/ssl:/etc/estudiohc/ssl:ro
     environment:
       - API_KEY=${API_KEY:?defina API_KEY}
       - DATABASE_URL=sqlite+aiosqlite:////root/Apps/EstudioHC-Memory-Suite/data/estudiohc.db

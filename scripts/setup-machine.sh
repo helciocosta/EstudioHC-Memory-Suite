@@ -10,6 +10,7 @@
 set -euo pipefail
 
 SERVIDOR_CENTRAL="100.64.117.78"   # Tailscale IP do Contabo
+SERVIDOR_URL="https://${SERVIDOR_CENTRAL}:5050"
 REPO_URL="git@github.com:helciocosta/EstudioHC-Memory-Suite.git"
 REPO_DIR="$HOME/Apps/EstudioHC-Memory-Suite"
 MODELS_DIR="$REPO_DIR/models"
@@ -36,9 +37,9 @@ TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "DESCONHECIDO")
 info "IP Tailscale desta estação: $TAILSCALE_IP"
 
 # ── Ping no servidor central ────────────────────────────────────
-info "Testando conexão com servidor central ($SERVIDOR_CENTRAL)..."
-if curl -s --connect-timeout 5 "http://${SERVIDOR_CENTRAL}:5050/api/status" >/dev/null 2>&1; then
-    info "✅ Servidor central online em ${SERVIDOR_CENTRAL}:5050"
+info "Testando conexão com servidor central ($SERVIDOR_URL)..."
+if curl -s -k --connect-timeout 5 "${SERVIDOR_URL}/api/status" >/dev/null 2>&1; then
+    info "✅ Servidor central online em ${SERVIDOR_URL}"
 else
     warn "⚠️  Servidor central não respondeu. Verifique Tailscale."
     warn "   Continuando mesmo assim (instalação local apenas)."
@@ -122,7 +123,7 @@ if command -v opencode &>/dev/null; then
   "mcp": {
     "memory": {
       "type": "local",
-      "command": ["env", "MEMORY_API_URL=http://${SERVIDOR_CENTRAL}:5050", "MEMORY_API_KEY=${CHAVE_ESTACAO}", "python3", "${REPO_DIR}/apps/mcp-memory/src/memory_server.py"],
+      "command": ["env", "MEMORY_API_URL=${SERVIDOR_URL}", "MEMORY_API_KEY=${CHAVE_ESTACAO}", "python3", "${REPO_DIR}/apps/mcp-memory/src/memory_server.py"],
       "enabled": true
     }
   },
@@ -211,7 +212,7 @@ fi
 # ── Registrar estação no servidor central (se online) ──────────
 if [ -n "$MASTER_KEY" ]; then
     PAYLOAD=$(python3 -c 'import json,sys; print(json.dumps({"hostname": sys.argv[1], "chave": sys.argv[2]}))' "$(hostname)" "$CHAVE_ESTACAO")
-    curl -s -X POST "http://${SERVIDOR_CENTRAL}:5050/api/estacoes/registrar" \
+    curl -s -k -X POST "${SERVIDOR_URL}/api/estacoes/registrar" \
         -H "Content-Type: application/json" \
         -H "X-API-Key: ${MASTER_KEY}" \
         -d "$PAYLOAD" \
@@ -219,7 +220,7 @@ if [ -n "$MASTER_KEY" ]; then
         || warn "Não foi possível registrar a estação. API offline ou MASTER_KEY inválida?"
 fi
 
-curl -s -X POST "http://${SERVIDOR_CENTRAL}:5050/api/estacoes/ping" \
+curl -s -k -X POST "${SERVIDOR_URL}/api/estacoes/ping" \
     -H "Content-Type: application/json" \
     -H "X-API-Key: ${CHAVE_ESTACAO}" \
     -d "{\"hostname\":\"$(hostname)\",\"ip\":\"${TAILSCALE_IP}\"}" \

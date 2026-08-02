@@ -32,18 +32,43 @@ async def get_agenda(db: AsyncSession = Depends(get_db)):
 
 @router.post("")
 async def save_agenda(payload: AgendaSavePayload, db: AsyncSession = Depends(get_db)):
-    await db.execute(delete(Agenda))
+    processados = 0
     for ev in payload.eventos:
-        db.add(
-            Agenda(
-                id=ev.id,
-                data=ev.data,
-                hora=ev.hora,
-                titulo=ev.titulo,
-                estacao=ev.estacao,
-                descricao=ev.descricao,
-                timestamp=datetime.now().isoformat(),
-            )
+        existing = await db.execute(
+            select(Agenda).where(Agenda.id == ev.id)
         )
+        row = existing.scalar_one_or_none()
+        if row:
+            row.data = ev.data
+            row.hora = ev.hora
+            row.titulo = ev.titulo
+            row.estacao = ev.estacao
+            row.descricao = ev.descricao
+            row.timestamp = datetime.now().isoformat()
+        else:
+            db.add(
+                Agenda(
+                    id=ev.id,
+                    data=ev.data,
+                    hora=ev.hora,
+                    titulo=ev.titulo,
+                    estacao=ev.estacao,
+                    descricao=ev.descricao,
+                    timestamp=datetime.now().isoformat(),
+                )
+            )
+        processados += 1
+    await db.commit()
+    return {"ok": True, "merge": processados}
+
+
+@router.delete("/{evento_id}")
+async def delete_evento(evento_id: str, db: AsyncSession = Depends(get_db)):
+    existing = await db.execute(
+        select(Agenda).where(Agenda.id == evento_id)
+    )
+    if existing.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Evento não encontrado")
+    await db.execute(delete(Agenda).where(Agenda.id == evento_id))
     await db.commit()
     return {"ok": True}

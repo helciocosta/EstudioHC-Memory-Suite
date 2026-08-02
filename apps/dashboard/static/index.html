@@ -347,9 +347,9 @@ function adicionarEvento() {
   renderCalendario();
 }
 
-function removerEvento(id) {
+async function removerEvento(id) {
+  await fetch(`${API}/agenda/${id}`, {method: 'DELETE'});
   agenda = agenda.filter(e => e.id !== id);
-  salvarAgenda();
   renderEventosDia();
 }
 

@@ -275,7 +275,8 @@ Versão 3.0.0 · autenticação opcional por API Key (ver [Autenticação](#aute
 | GET | `/recall/{project}` | Recupera memórias |
 | GET | `/status/{project}` | Tasks pendentes/concluídas (texto legível) |
 | GET | `/api/agenda` | Lista agenda |
-| POST | `/api/agenda` | Salva agenda |
+| POST | `/api/agenda` | Salva agenda (merge/upsert por `id`) |
+| DELETE | `/api/agenda/{id}` | Remove um evento da agenda |
 | GET | `/api/diarios` | Lista diários |
 | GET | `/api/diario/{data}` | Lê diário |
 | POST | `/api/diario/{data}/resumo` | Resumo do diário |
@@ -305,8 +306,9 @@ Exemplos de integração (agenda, notas, diários, projetos, tarefas, estações
 Autenticação via header `X-API-Key` quando ativa.
 
 **Agenda** — `GET /api/agenda` lista todos os eventos.
-⚠️ **Atenção:** `POST /api/agenda` **substitui a agenda inteira** (apaga todos os
-eventos e insere a lista enviada). Envie sempre a lista completa.
+`POST /api/agenda` faz **merge/upsert por `id`**: insere eventos novos, atualiza
+os que já existem e **preserva eventos não enviados** (não é mais destrutivo).
+`DELETE /api/agenda/{id}` remove um único evento.
 
 ```bash
 curl -X POST "http://100.64.117.78:5050/api/agenda" \
@@ -315,6 +317,9 @@ curl -X POST "http://100.64.117.78:5050/api/agenda" \
     {"id": "a1", "data": "2026-08-03", "hora": "09:00", "titulo": "Reunião equipe", "estacao": "central", "descricao": "Check-in semanal"},
     {"id": "a2", "data": "2026-08-04", "hora": "14:30", "titulo": "Deploy", "estacao": "central"}
   ]}'
+
+# Remove um evento específico
+curl -X DELETE "http://100.64.117.78:5050/api/agenda/a1"
 ```
 
 **Notas** — `POST /api/nota` adiciona uma nota à estação informada.

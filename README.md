@@ -1,4 +1,4 @@
-# EstudioHC Memory Suite v4.2
+# EstudioHC Memory Suite v4.3
 
 Infraestrutura centralizada de memória, contexto e inferência local para o
 ecossistema de agentes AI de Helcio O. Costa — com **servidor central
@@ -6,7 +6,7 @@ orquestrando múltiplas estações** na rede Tailscale.
 
 > **Repositório:** `github.com/helciocosta/EstudioHC-Memory-Suite.git`
 > **Servidor Central:** `vmi2968998` (Contabo) · Tailscale `100.64.117.78` · API na porta 5050
-> **Stack:** CPU-only · Ubuntu 24.04 · Python 3.12 · llama.cpp b8763
+> **Stack:** CPU-only · Ubuntu 24.04 · Python 3.11 · FastAPI 3.0 · mcp 1.28
 
 ---
 
@@ -17,10 +17,12 @@ orquestrando múltiplas estações** na rede Tailscale.
 - [Serviços por Máquina](#serviços-por-máquina)
 - [API Central (porta 5050)](#api-central-porta-5050)
 - [MCP Memory Server](#mcp-memory-server)
+- [Documentos por Projeto (ChromaDB)](#documentos-por-projeto-chromadb)
+- [Autenticação e Rate Limiting](#autenticação-e-rate-limiting)
+- [Testes e CI](#testes-e-ci)
 - [Local Memory Stack (WAL de Sobrevivência)](#local-memory-stack-wal-de-sobrevivência)
 - [Infraestrutura de Inferência Local](#infraestrutura-de-inferência-local)
 - [Provisionamento de Novas Estações](#provisionamento-de-novas-estações)
-- [Integrações](#integrações)
 - [Monitoramento](#monitoramento)
 - [Variáveis de Ambiente](#variáveis-de-ambiente)
 
@@ -42,9 +44,11 @@ orquestrando múltiplas estações** na rede Tailscale.
 │              │   │              │   │                   │
 │  API :5050   │   │  llama.cpp   │   │  llama.cpp        │
 │  SQLite ÚNICO│   │  :11434      │   │  :11434           │
-│  Agenda/Proj │   │  :11435      │   │  :11435           │
-│  Backup diário│  │  MCP → API   │   │  MCP → API        │
-│  Dashboard   │   │  (dev/lab)   │   │  (dev/lab)        │
+│  ChromaDB    │   │  :11435      │   │  :11435           │
+│  :8765 (SSE) │   │  MCP → API   │   │  MCP → API        │
+│  Agenda/Proj │   │  (dev/lab)   │   │  (dev/lab)        │
+│  Backup diário│  │              │   │                   │
+│  Dashboard   │   │              │   │                   │
 └──────────────┘   └──────────────┘   └──────────────────┘
        ▲                    ▲                    ▲
        │                    │                    │
@@ -85,6 +89,11 @@ orquestrando múltiplas estações** na rede Tailscale.
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+A camada de **documentos por projeto** (ChromaDB) é uma via paralela à memória:
+documentos longos (manuais, specs, logs, artigos) são armazenados por
+similaridade semântica e buscados com as tools `doc_*`, sem competir com o
+fluxo de memória resumida do SQLite.
+
 ---
 
 ## Estrutura do Projeto
@@ -93,21 +102,25 @@ orquestrando múltiplas estações** na rede Tailscale.
 EstudioHC-Memory-Suite/
 ├── apps/
 │   ├── api/                      → FastAPI Central (porta 5050)
-│   │   ├── src/                  → main, config, database, models, routers
+│   │   ├── src/                  → main, config, security, database, models, routers
+│   │   ├── tests/                → pytest (conftest, test_memory, test_security)
 │   │   ├── alembic/              → Migrations
 │   │   ├── Dockerfile
-│   │   └── pyproject.toml
-│   ├── mcp-stdio/                → MCP stdio legado (2 tools)
+│   │   └── pyproject.toml        → deps + dev extra + pytest config
+│   ├── chromadb-mcp/             → MCP SSE server (ChromaDB, porta 8765)
+│   │   └── server.py             → 8 tools (list/create/delete collection, add/search/get/delete documents, info)
+│   ├── mcp-stdio/                → MCP stdio legado
 │   │   └── Dockerfile
-│   ├── mcp-memory/               → MCP Memory Server moderno
+│   ├── mcp-memory/               → MCP Memory Server moderno (12 tools)
 │   │   ├── src/
-│   │   │   ├── memory_server.py  → WM + FAISS + RRF + budget
-│   │   │   ├── summarizer.py     → Sumarização via llama.cpp:11435
+│   │   │   ├── memory_server.py  → WM + FAISS + RRF + budget + doc_* tools
+│   │   │   ├── chroma_client.py  → Cliente SSE do ChromaDB (camada de documentos)
+│   │   │   ├── summarizer.py     → Sumarização via llama.cpp:11435 (Qwen3-1.7B)
 │   │   │   └── embedder.py       → Embeddings + índice FAISS
 │   │   ├── Dockerfile
 │   │   └── pyproject.toml
 │   └── dashboard/                → Web UI (porta 8585)
-│       ├── static/               → index.html, projeto.html
+│       ├── static/               → index.html, projeto.html, agenda.json
 │       ├── Dockerfile
 │       └── pyproject.toml
 ├── cli/
@@ -118,10 +131,10 @@ EstudioHC-Memory-Suite/
 │   │       └── SKILL.md          → Skill de WAL textual pós-queda
 │   └── tmux/
 │       └── .tmux.conf            → history-limit 50000 + remain-on-exit
-├── server/
-│   ├── mcp_server.py             → FastAPI hub central (5050)
-│   ├── mcp_stdio_server.py       → MCP stdio legado
-│   └── requirements.txt
+├── .github/
+│   └── workflows/
+│       └── ci.yml                → CI: pytest no apps/api (push master + PR)
+├── orchestrator/                  → Orquestração de agentes (agent_orchestrator.py, dashboard.py)
 ├── scripts/
 │   ├── backup.sh                 → Backup diário SQLite + FAISS
 │   ├── bootstrap-memory-stack.sh → Instala journal_recovery + configs locais
@@ -135,6 +148,9 @@ EstudioHC-Memory-Suite/
 └── PLANO_UNIFICACAO.md           → Roteiro de modernização
 ```
 
+> `server/` e `dashboard/` (raiz) e `apps/mcp-stdio/` são **legados** e não são
+> usados pelos serviços ativos.
+
 ---
 
 ## Serviços por Máquina
@@ -145,6 +161,7 @@ EstudioHC-Memory-Suite/
 |---|---|---|
 | `estudiohc-api.service` | 5050 (0.0.0.0) | API Central — FastAPI, SQLite único, agenda, projetos, memória |
 | `estudiohc-dashboard.service` | 8585 (0.0.0.0) | Web UI de administração |
+| `chromadb-mcp.service` | 8765 (0.0.0.0) | MCP SSE server do ChromaDB (camada de documentos) |
 | `llama-server.service` | 11434 (0.0.0.0) | LLM principal (cybersec-assistant-3b) — opcional no servidor |
 | `llama-server-summarizer.service` | 11435 (127.0.0.1) | Sumarizador (Qwen3-1.7B) — opcional no servidor |
 | `estudiohc-backup.timer` | — | Backup diário do SQLite + FAISS às 03:00 |
@@ -171,36 +188,46 @@ Flags comuns do llama.cpp em todas as máquinas:
 
 ---
 
-## API REST (porta 5050)
+## API Central (porta 5050)
 
 FastAPI Central — servidor HTTP de persistência e coordenação.
+Versão 3.0.0 · autenticação opcional por API Key (ver [Autenticação](#autenticação-e-rate-limiting)).
 
 | Método | Rota | Descrição |
 |---|---|---|
-| POST | `/remember` | Salva memória de agente |
+| POST | `/remember` | Salva memória de agente — retorna `{"status":"success","id":N}` |
 | GET | `/recall/{project}` | Recupera memórias |
-| GET | `/status/{project}` | Tasks pendentes/concluídas |
+| GET | `/status/{project}` | Tasks pendentes/concluídas (texto legível) |
 | GET | `/api/agenda` | Lista agenda |
 | POST | `/api/agenda` | Salva agenda |
 | GET | `/api/diarios` | Lista diários |
 | GET | `/api/diario/{data}` | Lê diário |
+| POST | `/api/diario/{data}/resumo` | Resumo do diário |
 | POST | `/api/nota` | Adiciona nota |
 | GET | `/api/projetos` | Lista projetos |
 | POST | `/api/projetos/sync` | Sincroniza projetos |
 | POST | `/api/projetos/gerar-relatorio` | Relatório IA do projeto |
 | GET | `/api/estacoes` | Lista estações |
 | POST | `/api/estacoes/ping` | Heartbeat de estação |
-| POST | `/api/hermes` | Chat com IA (Hermes CLI) |
-| GET | `/api/status` | Health check |
-| GET | `/api/status_md` | Status em markdown |
+| POST | `/api/hermes` | Chat com IA (OpenCode → Hermes) — com rate limit |
+| GET | `/api/tarefas` | Lista tarefas |
+| POST | `/api/tarefas` | Cria tarefa |
+| PUT | `/api/tarefas/{id}` | Atualiza tarefa |
+| DELETE | `/api/tarefas/{id}` | Remove tarefa |
+| GET | `/api/status` | Health check (aberto) |
+| GET | `/api/status_md` | Status em markdown (aberto) |
 
 Docs interativos: `/docs` (Swagger) e `/redoc` (ReDoc).
+
+> **Autenticação:** quando `API_KEY` está configurada, todas as rotas acima
+> (exceto `/api/status` e `/api/status_md`) exigem o header `X-API-Key`.
+> Com `API_KEY` vazia (default), a API fica aberta — modo desenvolvimento.
 
 ---
 
 ## MCP Memory Server
 
-O `apps/mcp-memory/` implementa o servidor MCP STDIO com 9 ferramentas
+O `apps/mcp-memory/` implementa o servidor MCP STDIO com **12 ferramentas**
 registradas no OpenCode.
 
 ### Ferramentas
@@ -215,6 +242,10 @@ registradas no OpenCode.
 | `wm_list` | Lista WM com token count (ex: `3 items, 512/2048 tok`) |
 | `wm_clear` | Limpa WM (opcional: filtro por categoria) |
 | `consolidate` | Move WM → LTM com sumarização LLM |
+| `doc_add` | Armazena documento longo de um projeto no ChromaDB |
+| `doc_search` | Busca semântica em documentos do projeto (ChromaDB) |
+| `doc_list` | Lista documentos do projeto com contagem total |
+| `doc_delete` | Remove um documento pelo id |
 
 ### Ranking Híbrido (search_memory)
 
@@ -226,6 +257,8 @@ RRF   = keyword_rank × 0.4 + vector_rank × 0.6
 - Decaimento: 30 dias para início, 60 dias para exclusão
 - FAISS IndexFlatIP (all-MiniLM-L6-v2, dim 384)
 - Budget: `MEMORY_INJECT_TOKENS` (1024) — top-1 sempre incluso
+- Cada memória é indexada no FAISS com o **id real** retornado pela API
+  (`{id}|{category}`), garantindo que o ranking vetorial contribua de fato.
 
 ### Resiliência e Timeouts
 
@@ -265,6 +298,115 @@ Registrado em `~/.config/opencode/opencode.jsonc`, apontando para o servidor cen
 > A variável `MEMORY_API_URL` redireciona a persistência para o servidor central.
 > Em estações novas, use `scripts/setup-machine.sh` para configurar automaticamente.
 
+---
+
+## Documentos por Projeto (ChromaDB)
+
+A camada de documentos armazena conteúdo longo (manuais, specs, logs,
+artigos) com **busca semântica por similaridade**, de forma independente da
+memória resumida do SQLite.
+
+### Arquitetura
+
+```
+MCP Memory Server (memory_server.py)
+   │  tools doc_add / doc_search / doc_list / doc_delete
+   ▼
+chroma_client.py  (cliente MCP via SSE, reconnect automático)
+   │  sse_client → http://localhost:8765/mcp
+   ▼
+chromadb-mcp server (porta 8765, SSE)  →  ChromaDB PersistentClient
+   ├── add_documents      → coleta `docs_<project>` (criada on-demand)
+   ├── search_documents   → busca semântica com score
+   ├── get_documents      → paginação (limit/offset)
+   ├── delete_documents   → remove por ids
+   ├── get_collection_info / list_collections / create_collection / delete_collection
+```
+
+### Modelo de Dados
+
+- **Coleção por projeto:** `docs_<project>` (ex: `docs_opencode`), criada
+  automaticamente no primeiro `doc_add`.
+- **id:** `<slug>_<YYYYmmddHHMMSS>` — slug = título em minúsculas,
+  não-alfanumérico → `_`, truncado em 40 chars (fallback `doc`).
+- **metadata:** `{title, tags, ts, project}` — `tags` é string separada por
+  vírgula (nunca lista); `ts` é ISO em segundos.
+
+### Ferramentas
+
+| Tool | Parâmetros | Retorno |
+|---|---|---|
+| `doc_add` | `project` (default `opencode`), `title`, `content`, `tags[]` | `{"id","collection","added"}` |
+| `doc_search` | `query` (obrigatório), `project`, `limit` (1-20, default 5) | linhas `[ts] (score) title` + snippet |
+| `doc_list` | `project`, `limit` (1-100, default 20) | linhas `id [ts] title` |
+| `doc_delete` | `id` (obrigatório), `project` | `{"deleted","collection","id"}` |
+
+Se a coleção de um projeto ainda não existe, as tools retornam a mensagem
+`collection 'docs_<project>' not found (no documents yet for project '<project>')`.
+
+### Integração OpenCode (no servidor)
+
+O memory server em produção roda via SSH do opencode.json do Windows:
+
+```json
+"estudiohc-memory": {
+  "type": "local",
+  "command": ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
+    "deploy@100.64.117.78",
+    "cd ~/Apps/EstudioHC-Memory-Suite/apps/mcp-memory && ./.venv/bin/python src/memory_server.py"]
+}
+```
+
+O `chromadb-mcp` também é registrado como servidor MCP remoto (`chromadb-contabo`,
+SSE em `http://100.64.117.78:8765/mcp`) para acesso direto às tools do ChromaDB.
+
+---
+
+## Autenticação e Rate Limiting
+
+Implementado em `apps/api/src/security.py` e aplicado em `apps/api/src/main.py`.
+
+### API Key opcional
+
+- Configuração: variável de ambiente `API_KEY` (vazia = auth **desabilitado**).
+- Quando configurada, toda rota protegida exige header `X-API-Key`.
+- O `memory_server.py` envia a chave automaticamente via `MEMORY_API_KEY`.
+
+### Rate Limiting
+
+- Aplicado ao `/api/hermes` (rota que consome LLM).
+- Janela deslizante de 60s por IP; `RATE_LIMIT_PER_MIN` (default 10).
+- Excesso retorna HTTP 429.
+
+> **Dashboard:** ao ativar `API_KEY`, o dashboard estático (`apps/dashboard/static/`)
+> precisa enviar o header `X-API-Key` nas chamadas — pendência documentada antes
+> de habilitar auth em produção.
+
+---
+
+## Testes e CI
+
+### Testes locais (pytest)
+
+```bash
+cd apps/api
+pip install -e ".[dev]"
+python -m pytest -v
+```
+
+| Teste | Verifica |
+|---|---|
+| `test_remember_returns_id` | POST `/remember` retorna `id` inteiro > 0 |
+| `test_status_returns_readable_text` | GET `/status/{project}` retorna texto legível |
+| `test_api_key_required_when_configured` | Sem `X-API-Key` → 401 |
+| `test_api_key_accepted` | Com `X-API-Key` correta → 200 |
+
+### CI (GitHub Actions)
+
+`.github/workflows/ci.yml` roda em push para `master` e PRs: instala
+`apps/api` com dev deps (Python 3.11) e executa `pytest -v`.
+
+---
 
 ## Local Memory Stack (WAL de Sobrevivência)
 
@@ -294,7 +436,7 @@ Nova sessão → journal_recovery skill lê .matrixx/journal.md
            → extrai últimas 15 entradas como contexto
            → agente opera com continuidade
            → cada turno: append no journal.md (>> atômico)
-           → task complete: memory-auto salva no Qdrant
+           → task complete: memória consolidada no servidor central
            → queda de energia? journal.md sobrevive
 ```
 
@@ -304,9 +446,9 @@ Nova sessão → journal_recovery skill lê .matrixx/journal.md
 |---|---|---|
 | `journal_recovery` (local) | Nenhuma — funciona offline | WAL textual pós-queda |
 | MCP Memory Server | Servidor central :5050 | Memória remota compartilhada entre estações |
-| `memory-auto` (Qdrant) | Qdrant local | Busca semântica entre sessões |
+| Documentos (ChromaDB) | chromadb-mcp :8765 | Busca semântica de documentos longos por projeto |
 
-As três camadas são independentes e complementares.
+As camadas são independentes e complementares.
 
 ### Instalação
 
@@ -318,6 +460,7 @@ As três camadas são independentes e complementares.
 O script copia o skill para `~/.agents/skills/`, instala o `.tmux.conf`,
 e cria o diretório `.matrixx/` com os arquivos iniciais.
 
+---
 
 ## Provisionamento de Novas Estações
 
@@ -376,16 +519,6 @@ persistentes (agenda, projetos, tarefas, memória de longo prazo).
 | Prompt Caching | ❌ | ✅ `--cache-prompt` (default on) |
 | Continuous Batching | ❌ | ✅ `--cont-batching` |
 
-### Flags Críticas
-
-| Flag | Efeito |
-|---|---|
-| `--flash-attn auto` | Reduz largura de banda da atenção ~2x |
-| `--cache-reuse 256` | KV Cache Shift — reaproveita prefixo em chamadas repetidas |
-| `--keep -1` | System prompt nunca sai do cache |
-| `--device none` | Força CPU-only (evita falha de VRAM em GPU limitada) |
-| `--no-kv-offload` | KV cache 100% em RAM (0 latência de transferência) |
-
 ### Modelos
 
 | Modelo | Arquivo | Quantização | Uso |
@@ -405,24 +538,6 @@ ollama run    → echo "llama-server rodando na porta 11434"
 
 ---
 
-## Integrações
-
-### Odysseus
-
-```env
-LLM_HOST=localhost  →  http://localhost:11434/v1/chat/completions
-```
-
-- Compatível com formato OpenAI de mensagens
-- Embeddings via `/v1/embeddings` ou fallback fastembed local
-
-### Agentes OpenCode
-
-Todos os agentes configurados (Morpheus, Merovingian, Trinity, etc.)
-consomem as ferramentas MCP de memória diretamente via STDIO.
-
----
-
 ## Monitoramento
 
 ### Logs
@@ -433,42 +548,33 @@ journalctl -u llama-server.service -f --no-hostname -o cat
 
 # Summarizer
 journalctl -u llama-server-summarizer.service -f --no-hostname -o cat
+
+# API central
+journalctl -u estudiohc-api.service -f --no-hostname -o cat
+
+# ChromaDB MCP
+journalctl -u chromadb-mcp.service -f --no-hostname -o cat
 ```
 
 ### Healthcheck
 
 ```bash
-# Disponibilidade
-curl -s -o /dev/null -w "%{http_code}" http://localhost:11434/v1/models
+# Disponibilidade da API
+curl -s http://localhost:5050/api/status
+
+# Disponibilidade do ChromaDB MCP (SSE)
+curl -s -H "Accept: text/event-stream" http://localhost:8765/mcp
 
 # Inferência
 curl -s http://localhost:11434/v1/chat/completions \
   -d '{"model":"llama","messages":[{"role":"user","content":"ping"}],"max_tokens":5}'
-
-# KV Cache Hit
-curl -s ... | python3 -c "
-import sys,json; d=json.load(sys.stdin)
-t = d['usage']['prompt_tokens_details']
-print(f'Cache: {t[\"cached_tokens\"]} tok, Prompt: {d[\"timings\"][\"prompt_ms\"]:.0f}ms')"
-```
-
-### Recursos
-
-```bash
-# Memória
-ps -o pid,rss,comm -p $(pgrep -d',' -f msty-llama-server) \
-  | awk 'NR>1 {printf "%s: %.1f GiB\n", $3, $2/1024/1024}'
-
-# Portas
-ss -tlnp | grep -E "1143[4-5]|5050"
-
-# Logs de erro
-journalctl -u llama-server.service --no-pager | grep -i "error\|fail\|warn"
 ```
 
 ### Gerenciamento
 
 ```bash
+sudo systemctl restart estudiohc-api.service
+sudo systemctl restart chromadb-mcp.service
 sudo systemctl restart llama-server.service
 sudo systemctl restart llama-server-summarizer.service
 ```
@@ -477,21 +583,41 @@ sudo systemctl restart llama-server-summarizer.service
 
 ## Variáveis de Ambiente
 
-| Variável | Default | Serviço | Descrição |
-|---|---|---|---|---|
-| `MEMORY_MAX_TOKENS` | 2048 | memory-server.py | Budget total da Working Memory |
-| `MEMORY_INJECT_TOKENS` | 1024 | memory-server.py | Budget por chamada de search_memory |
-| `MEMORY_SUMMARIZE_THRESHOLD` | 60 | memory-server.py | Tamanho mínimo (chars) para sumarizar |
-| `MEMORY_MAX_INJECT` | 3 | memory-server.py | Máximo de itens injetados |
-| `MEMORY_DECAY_DAYS` | 30 | memory-server.py | Dias para início do decaimento |
-| `HYBRID_RRF_K` | 60 | memory-server.py | Constante K do RRF ranking |
-| `MEMORY_API_URL` | `http://100.64.117.78:5050` (estação) | memory-server.py | Endpoint de persistência LTM no servidor central |
-|  | `http://localhost:5050` (servidor) | | |
-| `CUDA_VISIBLE_DEVICES` | "" | systemd services | Força CPU-only |
+### API Central (`apps/api`)
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `APP_NAME` | `EstudioHC Central API` | Nome da aplicação |
+| `DEBUG` | `false` | Modo debug |
+| `API_PORT` | `5050` | Porta da API |
+| `DATABASE_URL` | `sqlite+aiosqlite:///${HOME}/Apps/EstudioHC-Memory-Suite/data/estudiohc.db` | Conexão SQLite (ou PostgreSQL asyncpg) |
+| `CORS_ORIGINS` | `["*"]` | Origens permitidas |
+| `DASHBOARD_PATH` | `./apps/dashboard/static` | Caminho do dashboard estático |
+| `HERMES_CLI` | `${HOME}/.local/bin/hermes` | Binário do Hermes CLI |
+| `HERMES_TIMEOUT` | `120` | Timeout do Hermes (s) |
+| `API_KEY` | *(vazio)* | Chave de API — vazio desabilita auth; configurado, exige `X-API-Key` |
+| `RATE_LIMIT_PER_MIN` | `10` | Máximo de chamadas por IP/min no `/api/hermes` |
+
+### MCP Memory Server (`apps/mcp-memory`)
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `MEMORY_API_URL` | `http://localhost:5050` | Endpoint de persistência LTM no servidor central |
+| `MEMORY_API_KEY` | *(vazio)* | Chave para o header `X-API-Key` nas chamadas à API |
+| `MEMORY_MAX_TOKENS` | `2048` | Budget total da Working Memory |
+| `MEMORY_INJECT_TOKENS` | `1024` | Budget por chamada de search_memory |
+| `MEMORY_SUMMARIZE_THRESHOLD` | `60` | Tamanho mínimo (chars) para sumarizar |
+| `MEMORY_MAX_INJECT` | `3` | Máximo de itens injetados |
+| `MEMORY_DECAY_DAYS` | `30` | Dias para início do decaimento |
+| `HYBRID_RRF_K` | `60` | Constante K do RRF ranking |
+| `CHROMA_MCP_URL` | `http://localhost:8765/mcp` | Endpoint SSE do chromadb-mcp (camada de documentos) |
+| `CHROMA_SSE_TIMEOUT` | `10` | Timeout de conexão SSE (s) |
+| `SUMMARIZER_API` | `http://localhost:11435/v1/chat/completions` | Endpoint do sumarizador (Qwen3-1.7B) |
+| `SUMMARIZER_MODEL` | `Qwen3-1.7B` | Modelo do sumarizador |
 
 ---
 
 > **Stack concluído.** Consulte [`PLANO_UNIFICACAO.md`](PLANO_UNIFICACAO.md) para o histórico
 > de modernização.
 
-*Projeto mantido por Helcio O. Costa. v4.2 — 2026-07-26*
+*Projeto mantido por Helcio O. Costa. v4.3 — 2026-08-02*

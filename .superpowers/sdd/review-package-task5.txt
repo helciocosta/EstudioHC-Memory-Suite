@@ -1,0 +1,287 @@
+=== COMMITS 50fbf09..d70e647 ===
+d70e647 feat(api): optional API key auth + rate limit on /api/hermes
+
+=== STAT ===
+ apps/api/src/config.py               |  4 ++++
+ apps/api/src/main.py                 | 19 ++++++++-----------
+ apps/api/src/security.py             | 27 +++++++++++++++++++++++++++
+ apps/api/tests/conftest.py           |  1 +
+ apps/api/tests/test_memory.py        |  8 +++++---
+ apps/api/tests/test_security.py      | 19 +++++++++++++++++++
+ apps/mcp-memory/src/memory_server.py |  6 +++++-
+ 7 files changed, 69 insertions(+), 15 deletions(-)
+
+=== DIFF ===
+diff --git a/apps/api/src/config.py b/apps/api/src/config.py
+index df51c2d..d2c7fa2 100644
+--- a/apps/api/src/config.py
++++ b/apps/api/src/config.py
+@@ -24,12 +24,16 @@ class Settings(BaseSettings):
+     # CORS
+     CORS_ORIGINS: list[str] = ["*"]
+ 
+     # Paths
+     DASHBOARD_PATH: str = str(Path(__file__).parent.parent.parent / "dashboard" / "static")
+     HERMES_CLI: str = str(Path.home() / ".local/bin/hermes")
+ 
+     # Hermes AI
+     HERMES_TIMEOUT: int = 120
+ 
++    # Auth
++    API_KEY: str = ""  # vazio = auth desabilitado (dev)
++    RATE_LIMIT_PER_MIN: int = 10
++
+ 
+ settings = Settings()
+\ No newline at end of file
+diff --git a/apps/api/src/main.py b/apps/api/src/main.py
+index 34a807e..c86fdc8 100644
+--- a/apps/api/src/main.py
++++ b/apps/api/src/main.py
+@@ -1,19 +1,20 @@
+ from fastapi import FastAPI, Depends
+ from fastapi.middleware.cors import CORSMiddleware
+ from fastapi.staticfiles import StaticFiles
+ from fastapi.responses import FileResponse
+ from pathlib import Path
+ 
+ from .config import settings
+ from .database import get_db, init_db
+ from .schemas import MemoryEntry
++from .security import require_api_key, rate_limiter
+ from .routers import memory, agenda, notas, projetos, estacoes, status, hermes, tarefas
+ 
+ description = """
+ EstudioHC Central API ÔÇö C├®rebro central do ecossistema EstudioHC.
+ 
+ Gerencia mem├│ria persistente de agentes, agenda, projetos, notas,
+ di├írios, tarefas e esta├º├Áes de trabalho via Tailscale.
+ """
+ 
+ app = FastAPI(
+@@ -29,46 +30,42 @@ app = FastAPI(
+ )
+ 
+ app.add_middleware(
+     CORSMiddleware,
+     allow_origins=settings.CORS_ORIGINS,
+     allow_credentials=True,
+     allow_methods=["*"],
+     allow_headers=["*"],
+ )
+ 
+-app.include_router(memory.router)
+-app.include_router(agenda.router)
+-app.include_router(notas.router)
+-app.include_router(projetos.router)
+-app.include_router(estacoes.router)
+-app.include_router(hermes.router)
+-app.include_router(tarefas.router)
+-app.include_router(status.router)
++for _r in (memory, agenda, notas, projetos, estacoes, tarefas):
++    app.include_router(_r.router, dependencies=[Depends(require_api_key)])
++app.include_router(hermes.router, dependencies=[Depends(require_api_key), Depends(rate_limiter)])
++app.include_router(status.router)  # status fica aberto (healthcheck)
+ 
+ 
+ @app.on_event("startup")
+ async def on_startup():
+     await init_db()
+ 
+ 
+-@app.post("/remember")
++@app.post("/remember", dependencies=[Depends(require_api_key)])
+ async def remember_backward(entry: MemoryEntry, db=Depends(get_db)):
+     return await memory.save_memory(entry, db)
+ 
+ 
+-@app.get("/recall/{project}")
++@app.get("/recall/{project}", dependencies=[Depends(require_api_key)])
+ async def recall_backward(project: str, limit: int = 10, db=Depends(get_db)):
+     return await memory.get_memory(project, limit, db)
+ 
+ 
+-@app.get("/status/{project}")
++@app.get("/status/{project}", dependencies=[Depends(require_api_key)])
+ async def status_backward(project: str, db=Depends(get_db)):
+     return await memory.get_status(project, db)
+ 
+ 
+ dashboard_path = Path(settings.DASHBOARD_PATH)
+ if dashboard_path.exists():
+     @app.get("/")
+     async def get_dashboard_index():
+         index_file = dashboard_path / "index.html"
+         if index_file.exists():
+diff --git a/apps/api/src/security.py b/apps/api/src/security.py
+new file mode 100644
+index 0000000..b11474c
+--- /dev/null
++++ b/apps/api/src/security.py
+@@ -0,0 +1,27 @@
++from time import monotonic
++from collections import defaultdict, deque
++from fastapi import Header, HTTPException, Request
++
++from .config import settings
++
++
++def require_api_key(x_api_key: str = Header(default="")):
++    if settings.API_KEY and x_api_key != settings.API_KEY:
++        raise HTTPException(status_code=401, detail="Invalid API key")
++    return True
++
++
++_requests: dict[str, deque[float]] = defaultdict(deque)
++
++
++async def rate_limiter(request: Request):
++    if not settings.API_KEY:
++        return
++    ip = request.client.host if request.client else "unknown"
++    now = monotonic()
++    dq = _requests[ip]
++    while dq and now - dq[0] > 60:
++        dq.popleft()
++    if len(dq) >= settings.RATE_LIMIT_PER_MIN:
++        raise HTTPException(status_code=429, detail="Rate limit exceeded")
++    dq.append(now)
+diff --git a/apps/api/tests/conftest.py b/apps/api/tests/conftest.py
+index ad7a414..af14a78 100644
+--- a/apps/api/tests/conftest.py
++++ b/apps/api/tests/conftest.py
+@@ -1,16 +1,17 @@
+ # apps/api/tests/conftest.py
+ import os
+ import tempfile
+ 
+ _tmp = tempfile.mkdtemp(prefix="estudiohc_test_")
+ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_tmp}/test.db"
++os.environ["API_KEY"] = "test-key"
+ 
+ import pytest_asyncio
+ from httpx import ASGITransport, AsyncClient
+ 
+ from src.database import init_db
+ from src.main import app
+ 
+ 
+ @pytest_asyncio.fixture(scope="session")
+ async def _setup_db():
+diff --git a/apps/api/tests/test_memory.py b/apps/api/tests/test_memory.py
+index 1a23e01..2dfead0 100644
+--- a/apps/api/tests/test_memory.py
++++ b/apps/api/tests/test_memory.py
+@@ -1,29 +1,31 @@
+ import json
+ from httpx import AsyncClient
+ 
++HEADERS = {"X-API-Key": "test-key"}
++
+ 
+ async def test_remember_returns_id(client: AsyncClient):
+-    resp = await client.post("/remember", json={
++    resp = await client.post("/remember", headers=HEADERS, json={
+         "agent_name": "opencode",
+         "project": "opencode",
+         "category": "context",
+         "content": json.dumps({"s": "fato X", "r": None, "c": True}),
+     })
+     assert resp.status_code == 200
+     body = resp.json()
+     assert body["status"] == "success"
+     assert isinstance(body["id"], int)
+     assert body["id"] > 0
+ 
+ 
+ async def test_status_returns_readable_text(client: AsyncClient):
+-    await client.post("/remember", json={
++    await client.post("/remember", headers=HEADERS, json={
+         "agent_name": "opencode",
+         "project": "opencode",
+         "category": "task_pending",
+         "content": json.dumps({"s": "Tarefa pendente legivel", "r": None, "c": True}),
+     })
+-    resp = await client.get("/status/opencode")
++    resp = await client.get("/status/opencode", headers=HEADERS)
+     assert resp.status_code == 200
+     body = resp.json()
+     assert body["pending"] == ["Tarefa pendente legivel"]
+diff --git a/apps/api/tests/test_security.py b/apps/api/tests/test_security.py
+new file mode 100644
+index 0000000..5de80ca
+--- /dev/null
++++ b/apps/api/tests/test_security.py
+@@ -0,0 +1,19 @@
++from httpx import AsyncClient
++
++
++async def test_api_key_required_when_configured(client: AsyncClient):
++    resp = await client.post("/remember", json={
++        "agent_name": "opencode", "project": "x",
++        "category": "context", "content": "sem chave",
++    })
++    assert resp.status_code == 401
++
++
++async def test_api_key_accepted(client: AsyncClient):
++    resp = await client.post(
++        "/remember",
++        json={"agent_name": "opencode", "project": "x",
++              "category": "context", "content": "com chave"},
++        headers={"X-API-Key": "test-key"},
++    )
++    assert resp.status_code == 200
+diff --git a/apps/mcp-memory/src/memory_server.py b/apps/mcp-memory/src/memory_server.py
+index 04711dc..b8ff6aa 100644
+--- a/apps/mcp-memory/src/memory_server.py
++++ b/apps/mcp-memory/src/memory_server.py
+@@ -9,20 +9,21 @@ import httpx
+ from mcp.server import Server, NotificationOptions
+ from mcp.server.models import InitializationOptions
+ from mcp.types import Tool, TextContent
+ from mcp.server.stdio import stdio_server
+ 
+ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ from summarizer import summarize as llm_summarize
+ import embedder as vec_store
+ 
+ MEMORY_API_URL = os.getenv("MEMORY_API_URL", "http://localhost:5050")
++MEMORY_API_KEY = os.getenv("MEMORY_API_KEY", "")
+ SUMMARIZE_THRESHOLD = int(os.getenv("MEMORY_SUMMARIZE_THRESHOLD", "60"))
+ MAX_INJECT = int(os.getenv("MEMORY_MAX_INJECT", "3"))
+ DECAY_DAYS = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
+ HYBRID_RRF_K = int(os.getenv("HYBRID_RRF_K", "60"))
+ 
+ # Token budget enforcement
+ MEMORY_MAX_TOKENS = int(os.getenv("MEMORY_MAX_TOKENS", "2048"))
+ MEMORY_INJECT_TOKENS = int(os.getenv("MEMORY_INJECT_TOKENS", "1024"))
+ 
+ 
+@@ -131,22 +132,25 @@ def score_memory(m: dict, query: str = "", category_filter: str = "") -> float:
+ 
+     cat_score = 1.0
+     if category_filter and category_filter != "context":
+         cat_score = 3.0 if cat == category_filter else 0.5
+ 
+     score = decay * 0.4 + kw_score * 0.35 + cat_score * 0.25
+     return round(score, 4)
+ 
+ 
+ async def call_api(method: str, path: str, **kwargs):
++    headers = kwargs.pop("headers", {})
++    if MEMORY_API_KEY:
++        headers["X-API-Key"] = MEMORY_API_KEY
+     async with httpx.AsyncClient(timeout=10) as client:
+-        resp = await client.request(method, f"{MEMORY_API_URL}{path}", **kwargs)
++        resp = await client.request(method, f"{MEMORY_API_URL}{path}", headers=headers, **kwargs)
+         resp.raise_for_status()
+         return resp.json()
+ 
+ 
+ def summarize_blocking(text: str) -> str:
+     try:
+         import concurrent.futures
+         with concurrent.futures.ThreadPoolExecutor() as pool:
+             future = pool.submit(llm_summarize, text)
+             return future.result(timeout=35)

@@ -1,0 +1,561 @@
+=== COMMITS 976a763..1b5f61a ===
+1b5f61a feat(mcp-memory): document layer via ChromaDB (doc_add/search/list/delete)
+
+=== STAT ===
+ apps/chromadb-mcp/server.py          | 230 +++++++++++++++++++++++++++++++++++
+ apps/mcp-memory/src/chroma_client.py | 145 ++++++++++++++++++++++
+ apps/mcp-memory/src/memory_server.py |  97 +++++++++++++++
+ 3 files changed, 472 insertions(+)
+
+=== FULL DIFF -U10 ===
+diff --git a/apps/chromadb-mcp/server.py b/apps/chromadb-mcp/server.py
+new file mode 100644
+index 0000000..fe93532
+--- /dev/null
++++ b/apps/chromadb-mcp/server.py
+@@ -0,0 +1,230 @@
++"""ChromaDB MCP Server - stdio (local) or SSE (remote/Tailscale).
++   Set CHROMA_TRANSPORT=sse to run in SSE mode on a port."""
++import json
++import os
++import sys
++from typing import Any
++
++import chromadb
++from chromadb.utils import embedding_functions
++from importlib.metadata import version as _pkg_version
++from mcp.server import Server
++from mcp.server.stdio import stdio_server
++from mcp.types import CallToolResult, ListToolsResult, ServerCapabilities, TextContent, Tool
++
++DATA_DIR = os.environ.get("CHROMA_DATA_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_data"))
++HOST = os.environ.get("CHROMA_HOST", "0.0.0.0")
++PORT = int(os.environ.get("CHROMA_PORT", "8765"))
++
++_mcp_ver = _pkg_version("mcp")
++MCP_MAJOR = int(_mcp_ver.split(".")[0])
++MCP_MINOR = int(_mcp_ver.split(".")[1])
++MCP_NEW_API = (MCP_MAJOR, MCP_MINOR) >= (1, 28)
++
++os.makedirs(DATA_DIR, exist_ok=True)
++client = chromadb.PersistentClient(path=DATA_DIR)
++
++server = Server("chromadb-mcp")
++
++if MCP_NEW_API:
++    from mcp.server.models import InitializationOptions
++    _init_options = InitializationOptions(
++        server_name="chromadb-mcp",
++        server_version=_pkg_version("mcp"),
++        capabilities=ServerCapabilities(),
++    )
++else:
++    _init_options = None
++
++COLLECTIONS_FILE = os.path.join(DATA_DIR, "collections.json")
++
++
++def _load_meta() -> dict:
++    if os.path.exists(COLLECTIONS_FILE):
++        with open(COLLECTIONS_FILE) as f:
++            return json.load(f)
++    return {}
++
++
++def _save_meta(data: dict) -> None:
++    with open(COLLECTIONS_FILE, "w") as f:
++        json.dump(data, f, indent=2)
++
++
++@server.list_tools()
++async def list_tools() -> ListToolsResult:
++    return ListToolsResult(tools=[
++        Tool(name="list_collections", description="List all collections",
++             inputSchema={"type": "object", "properties": {}}),
++        Tool(name="create_collection", description="Create a new collection",
++             inputSchema={"type": "object", "properties": {
++                 "name": {"type": "string", "description": "Collection name"},
++                 "metadata": {"type": "object", "description": "Optional metadata"},
++             }, "required": ["name"]}),
++        Tool(name="delete_collection", description="Delete a collection",
++             inputSchema={"type": "object", "properties": {
++                 "name": {"type": "string", "description": "Collection name"},
++             }, "required": ["name"]}),
++        Tool(name="add_documents", description="Add documents to a collection",
++             inputSchema={"type": "object", "properties": {
++                 "collection": {"type": "string"},
++                 "documents": {"type": "array", "items": {"type": "object",
++                     "properties": {
++                         "text": {"type": "string"},
++                         "id": {"type": "string"},
++                         "metadata": {"type": "object"},
++                     }, "required": ["text"]}},
++             }, "required": ["collection", "documents"]}),
++        Tool(name="search_documents", description="Search documents by semantic similarity",
++             inputSchema={"type": "object", "properties": {
++                 "collection": {"type": "string"},
++                 "query": {"type": "string"},
++                 "n_results": {"type": "integer", "default": 5},
++                 "filter_metadata": {"type": "object"},
++             }, "required": ["collection", "query"]}),
++        Tool(name="get_collection_info", description="Get collection info",
++             inputSchema={"type": "object", "properties": {
++                 "name": {"type": "string"},
++             }, "required": ["name"]}),
++        Tool(name="delete_documents", description="Delete documents from a collection by ids",
++             inputSchema={"type": "object", "properties": {
++                 "collection": {"type": "string"},
++                 "ids": {"type": "array", "items": {"type": "string"}},
++             }, "required": ["collection", "ids"]}),
++        Tool(name="get_documents", description="Get documents from a collection (id, text, metadata)",
++             inputSchema={"type": "object", "properties": {
++                 "collection": {"type": "string"},
++                 "limit": {"type": "integer", "default": 20},
++                 "offset": {"type": "integer", "default": 0},
++             }, "required": ["collection"]}),
++    ])
++
++
++@server.call_tool()
++async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
++    try:
++        if name == "list_collections":
++            cols = client.list_collections()
++            meta = _load_meta()
++            return CallToolResult(content=[TextContent(type="text",
++                text=json.dumps([{"name": c.name, "count": c.count(), "metadata": meta.get(c.name, {})}
++                                 for c in cols], indent=2))])
++
++        elif name == "create_collection":
++            n = arguments["name"]
++            m = arguments.get("metadata", {})
++            client.create_collection(name=n, metadata=m)
++            meta = _load_meta()
++            meta[n] = m
++            _save_meta(meta)
++            return CallToolResult(content=[TextContent(type="text",
++                text=json.dumps({"status": "created", "name": n}))])
++
++        elif name == "delete_collection":
++            client.delete_collection(arguments["name"])
++            meta = _load_meta()
++            meta.pop(arguments["name"], None)
++            _save_meta(meta)
++            return CallToolResult(content=[TextContent(type="text",
++                text=f"Deleted '{arguments['name']}'")])
++
++        elif name == "add_documents":
++            col = client.get_collection(name=arguments["collection"])
++            docs = arguments["documents"]
++            ids = [d.get("id", f"doc_{i}_{hash(d['text'][:50])}") for i, d in enumerate(docs)]
++            texts = [d["text"] for d in docs]
++            metas = [d.get("metadata", {}) for d in docs]
++            col.add(documents=texts, ids=ids, metadatas=metas)
++            return CallToolResult(content=[TextContent(type="text",
++                text=json.dumps({"added": len(docs), "ids": ids}))])
++
++        elif name == "search_documents":
++            col = client.get_collection(name=arguments["collection"])
++            r = col.query(query_texts=[arguments["query"]],
++                          n_results=min(arguments.get("n_results", 5), 50),
++                          where=arguments.get("filter_metadata"))
++            out = [{"id": r["ids"][0][i], "text": r["documents"][0][i][:500],
++                    "metadata": r["metadatas"][0][i] if r["metadatas"] else {},
++                    "score": float(r["distances"][0][i]) if r["distances"] else None}
++                   for i in range(len(r["ids"][0]))]
++            return CallToolResult(content=[TextContent(type="text",
++                text=json.dumps(out, indent=2, ensure_ascii=False))])
++
++        elif name == "get_collection_info":
++            col = client.get_collection(name=arguments["name"])
++            return CallToolResult(content=[TextContent(type="text",
++                text=json.dumps({"name": arguments["name"], "count": col.count()}, indent=2))])
++
++        elif name == "delete_documents":
++            col = client.get_collection(name=arguments["collection"])
++            ids = arguments["ids"]
++            col.delete(ids=ids)
++            return CallToolResult(content=[TextContent(type="text",
++                text=json.dumps({"deleted": len(ids), "ids": ids}))])
++
++        elif name == "get_documents":
++            col = client.get_collection(name=arguments["collection"])
++            r = col.get(limit=min(arguments.get("limit", 20), 100),
++                        offset=arguments.get("offset", 0),
++                        include=["documents", "metadatas"])
++            out = [{"id": r["ids"][i], "text": (r["documents"][i] or "")[:1000],
++                    "metadata": r["metadatas"][i] if r["metadatas"] else {}}
++                   for i in range(len(r["ids"]))]
++            return CallToolResult(content=[TextContent(type="text",
++                text=json.dumps(out, indent=2, ensure_ascii=False))])
++
++        else:
++            return CallToolResult(content=[TextContent(type="text", text=f"Unknown: {name}")], isError=True)
++    except ValueError as e:
++        return CallToolResult(content=[TextContent(type="text", text=f"Not found: {e}")], isError=True)
++    except Exception as e:
++        return CallToolResult(content=[TextContent(type="text", text=f"Error: {e}")], isError=True)
++
++
++# ---- STDIO mode (default) ----
++async def run_stdio():
++    async with stdio_server() as streams:
++        if MCP_NEW_API:
++            read_stream, write_stream = streams
++            await server.run(read_stream, write_stream, _init_options)
++        else:
++            await server.run(streams)
++
++
++# ---- SSE mode (for Tailscale/Contabo) ----
++def run_sse():
++    from starlette.applications import Starlette
++    from starlette.routing import Mount, Route
++    from mcp.server.sse import SseServerTransport
++
++    sse = SseServerTransport("/messages/")
++
++    async def handle_sse(request):
++        async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
++            if MCP_NEW_API:
++                read_stream, write_stream = streams
++                await server.run(read_stream, write_stream, _init_options)
++            else:
++                await server.run(streams)
++
++    async def handle_messages(request):
++        await sse.handle_post_message(request.scope, request.receive, request._send)
++
++    app = Starlette(debug=False, routes=[
++        Route("/mcp", endpoint=handle_sse),
++        Mount("/messages/", routes=[Route("/", endpoint=handle_messages, methods=["POST"])]),
++    ])
++
++    import uvicorn
++    print(f"ChromaDB MCP SSE listening on {HOST}:{PORT}/mcp  (Tailscale: 100.64.117.78:{PORT}/mcp)")
++    uvicorn.run(app, host=HOST, port=PORT, log_level="info")
++
++
++if __name__ == "__main__":
++    import anyio
++
++    transport = os.environ.get("CHROMA_TRANSPORT", "stdio")
++    if transport == "sse":
++        run_sse()
++    else:
++        anyio.run(run_stdio)
+diff --git a/apps/mcp-memory/src/chroma_client.py b/apps/mcp-memory/src/chroma_client.py
+new file mode 100644
+index 0000000..d18b40c
+--- /dev/null
++++ b/apps/mcp-memory/src/chroma_client.py
+@@ -0,0 +1,145 @@
++"""ChromaDB MCP SSE client for the memory server's document layer.
++
++Acts as a long-lived MCP *client* of the chromadb-mcp SSE service
++(http://localhost:8765/mcp), storing/searching full documents per project
++in ChromaDB collections named docs_<project>.
++"""
++import asyncio
++import json
++import os
++import re
++from datetime import datetime, timezone
++from typing import Any
++
++from mcp import ClientSession
++from mcp.client.sse import sse_client
++
++CHROMA_MCP_URL = os.getenv("CHROMA_MCP_URL", "http://localhost:8765/mcp")
++SSE_TIMEOUT = float(os.getenv("CHROMA_SSE_TIMEOUT", "10"))
++
++_session: ClientSession | None = None
++_streams: Any | None = None
++_lock = asyncio.Lock()
++
++
++def _collection(project: str) -> str:
++    return f"docs_{project}"
++
++
++def _slugify(title: str) -> str:
++    slug = re.sub(r"[^a-z0-9]+", "_", title.lower().strip())
++    slug = slug[:40].strip("_")
++    return slug or "doc"
++
++
++async def _get_session() -> ClientSession:
++    global _session, _streams
++    async with _lock:
++        if _session is not None:
++            return _session
++        _streams = sse_client(CHROMA_MCP_URL, timeout=SSE_TIMEOUT)
++        read_stream, write_stream = await _streams.__aenter__()
++        _session = ClientSession(read_stream, write_stream)
++        await _session.__aenter__()
++        await _session.initialize()
++        return _session
++
++
++async def close() -> None:
++    global _session, _streams
++    async with _lock:
++        if _session is not None:
++            await _session.__aexit__(None, None, None)
++            _session = None
++        if _streams is not None:
++            await _streams.__aexit__(None, None, None)
++            _streams = None
++
++
++async def _call_tool(name: str, arguments: dict) -> dict:
++    session = await _get_session()
++    try:
++        result = await session.call_tool(name, arguments)
++    except Exception:
++        await close()
++        session = await _get_session()
++        result = await session.call_tool(name, arguments)
++    text = "".join(c.text for c in result.content if getattr(c, "type", "") == "text")
++    if getattr(result, "isError", False):
++        raise ValueError(text)
++    try:
++        return json.loads(text)
++    except json.JSONDecodeError:
++        return {"text": text}
++
++
++def _not_found(project: str) -> ValueError:
++    return ValueError(
++        f"collection '{_collection(project)}' not found (no documents yet for project '{project}')"
++    )
++
++
++async def ensure_collection(project: str) -> str:
++    name = _collection(project)
++    cols = await _call_tool("list_collections", {})
++    names = [c.get("name") for c in cols] if isinstance(cols, list) else []
++    if name not in names:
++        await _call_tool("create_collection", {"name": name, "metadata": {"project": project}})
++    return name
++
++
++async def doc_add(project: str, title: str, content: str, tags: list | None = None) -> dict:
++    name = await ensure_collection(project)
++    now = datetime.now(timezone.utc)
++    doc_id = f"{_slugify(title)}_{now.strftime('%Y%m%d%H%M%S')}"
++    tags_str = ",".join(tags) if tags else ""
++    metadata = {
++        "title": title,
++        "tags": tags_str,
++        "ts": now.isoformat()[:19],
++        "project": project,
++    }
++    res = await _call_tool("add_documents", {
++        "collection": name,
++        "documents": [{"text": content, "id": doc_id, "metadata": metadata}],
++    })
++    return {"id": doc_id, "collection": name, **res}
++
++
++async def doc_search(project: str, query: str, limit: int = 5) -> list:
++    name = _collection(project)
++    try:
++        res = await _call_tool("search_documents", {
++            "collection": name, "query": query, "n_results": limit,
++        })
++    except ValueError as e:
++        if "not found" in str(e) or "does not exist" in str(e):
++            raise _not_found(project)
++        raise
++    return res if isinstance(res, list) else []
++
++
++async def doc_list(project: str, limit: int = 20) -> dict:
++    name = _collection(project)
++    try:
++        info = await _call_tool("get_collection_info", {"name": name})
++    except ValueError as e:
++        if "not found" in str(e) or "does not exist" in str(e):
++            raise _not_found(project)
++        raise
++    docs = await _call_tool("get_documents", {"collection": name, "limit": limit, "offset": 0})
++    return {
++        "count": info.get("count", 0),
++        "documents": docs if isinstance(docs, list) else [],
++    }
++
++
++async def doc_delete(project: str, doc_id: str) -> dict:
++    name = _collection(project)
++    try:
++        res = await _call_tool("delete_documents", {"collection": name, "ids": [doc_id]})
++    except ValueError as e:
++        if "not found" in str(e) or "does not exist" in str(e):
++            raise _not_found(project)
++        raise
++    return {"deleted": res.get("deleted", 1), "collection": name, "id": doc_id}
+diff --git a/apps/mcp-memory/src/memory_server.py b/apps/mcp-memory/src/memory_server.py
+index b8ff6aa..fa8db3b 100644
+--- a/apps/mcp-memory/src/memory_server.py
++++ b/apps/mcp-memory/src/memory_server.py
+@@ -7,20 +7,21 @@ from datetime import datetime, timezone
+ 
+ import httpx
+ from mcp.server import Server, NotificationOptions
+ from mcp.server.models import InitializationOptions
+ from mcp.types import Tool, TextContent
+ from mcp.server.stdio import stdio_server
+ 
+ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ from summarizer import summarize as llm_summarize
+ import embedder as vec_store
++import chroma_client as chroma
+ 
+ MEMORY_API_URL = os.getenv("MEMORY_API_URL", "http://localhost:5050")
+ MEMORY_API_KEY = os.getenv("MEMORY_API_KEY", "")
+ SUMMARIZE_THRESHOLD = int(os.getenv("MEMORY_SUMMARIZE_THRESHOLD", "60"))
+ MAX_INJECT = int(os.getenv("MEMORY_MAX_INJECT", "3"))
+ DECAY_DAYS = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
+ HYBRID_RRF_K = int(os.getenv("HYBRID_RRF_K", "60"))
+ 
+ # Token budget enforcement
+ MEMORY_MAX_TOKENS = int(os.getenv("MEMORY_MAX_TOKENS", "2048"))
+@@ -260,20 +261,71 @@ async def handle_list_tools() -> list[Tool]:
+             inputSchema={
+                 "type": "object",
+                 "properties": {
+                     "project": {"type": "string", "description": "Target project", "default": "opencode"},
+                     "category": {"type": "string", "description": "Only consolidate items of this category", "default": ""},
+                     "skip_summarize": {"type": "boolean", "description": "Skip LLM summarization", "default": False},
+                 },
+                 "required": [],
+             },
+         ),
++        Tool(
++            name="doc_add",
++            description="Store a long document (manual, spec, article, log) for a project in ChromaDB. Use for content too large or too detailed for memory. Returns the document id.",
++            inputSchema={
++                "type": "object",
++                "properties": {
++                    "project": {"type": "string", "description": "Project namespace", "default": "opencode"},
++                    "title": {"type": "string", "description": "Document title"},
++                    "content": {"type": "string", "description": "Document body"},
++                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags", "default": []},
++                },
++                "required": ["title", "content"],
++            },
++        ),
++        Tool(
++            name="doc_search",
++            description="Semantic search across documents of a project (ChromaDB). Returns matching titles, scores, timestamps and snippets.",
++            inputSchema={
++                "type": "object",
++                "properties": {
++                    "project": {"type": "string", "description": "Project namespace", "default": "opencode"},
++                    "query": {"type": "string", "description": "Search query"},
++                    "limit": {"type": "integer", "description": "Max results (1-20)", "default": 5, "minimum": 1, "maximum": 20},
++                },
++                "required": ["query"],
++            },
++        ),
++        Tool(
++            name="doc_list",
++            description="List documents stored for a project (ChromaDB) with total count.",
++            inputSchema={
++                "type": "object",
++                "properties": {
++                    "project": {"type": "string", "description": "Project namespace", "default": "opencode"},
++                    "limit": {"type": "integer", "description": "Max documents (1-100)", "default": 20, "minimum": 1, "maximum": 100},
++                },
++                "required": [],
++            },
++        ),
++        Tool(
++            name="doc_delete",
++            description="Delete a document from a project by its id (ChromaDB).",
++            inputSchema={
++                "type": "object",
++                "properties": {
++                    "project": {"type": "string", "description": "Project namespace", "default": "opencode"},
++                    "id": {"type": "string", "description": "Document id to delete"},
++                },
++                "required": ["id"],
++            },
++        ),
+     ]
+ 
+ 
+ @server.call_tool()
+ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
+     try:
+         if name == "add_memory":
+             content = arguments["content"]
+             project = arguments.get("project", "opencode")
+             category = arguments.get("category", "context")
+@@ -480,20 +532,65 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
+                 try:
+                     result = await call_api("POST", "/remember", json=payload)
+                     mem_id = result.get("id") or f"local_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+                     await asyncio.to_thread(vec_store.add, content, f"{mem_id}|{item['category']}")
+                     saved += 1
+                 except Exception as e:
+                     print(f"[memory] consolidate save failed: {e}", file=sys.stderr)
+ 
+             return [TextContent(type="text", text=f"Consolidated {saved}/{len(to_persist)} items to [{project}].")]
+ 
++        elif name == "doc_add":
++            project = arguments.get("project", "opencode")
++            title = arguments["title"]
++            content = arguments["content"]
++            tags = arguments.get("tags", [])
++            info = await chroma.doc_add(project, title, content, tags)
++            return [TextContent(type="text", text=json.dumps(info, ensure_ascii=False))]
++
++        elif name == "doc_search":
++            project = arguments.get("project", "opencode")
++            query = arguments["query"]
++            limit = min(arguments.get("limit", 5), 20)
++            docs = await chroma.doc_search(project, query, limit)
++            if not docs:
++                return [TextContent(type="text", text=f"No documents found in [{project}].")]
++            lines = [f"--- Documents in [{project}] ---"]
++            for d in docs:
++                meta = d.get("metadata") or {}
++                score = f"{d.get('score'):.3f}" if d.get("score") is not None else "n/a"
++                lines.append(f"[{meta.get('ts', '')}] ({score}) {meta.get('title', d.get('id'))}")
++                snippet = (d.get("text") or "")[:200].replace("\n", " ")
++                if snippet:
++                    lines.append(f"    {snippet}")
++            return [TextContent(type="text", text="\n".join(lines))]
++
++        elif name == "doc_list":
++            project = arguments.get("project", "opencode")
++            limit = min(arguments.get("limit", 20), 100)
++            data = await chroma.doc_list(project, limit)
++            docs = data.get("documents", [])
++            if not docs:
++                return [TextContent(type="text", text=f"No documents stored in [{project}] (count=0).")]
++            lines = [f"--- Documents in [{project}] (count={data.get('count', 0)}) ---"]
++            for d in docs:
++                meta = d.get("metadata") or {}
++                title = meta.get("title") or d.get("id")
++                lines.append(f"  {d.get('id')}  [{meta.get('ts', '')}] {title}")
++            return [TextContent(type="text", text="\n".join(lines))]
++
++        elif name == "doc_delete":
++            project = arguments.get("project", "opencode")
++            doc_id = arguments["id"]
++            info = await chroma.doc_delete(project, doc_id)
++            return [TextContent(type="text", text=json.dumps(info, ensure_ascii=False))]
++
+         else:
+             raise ValueError(f"Unknown tool: {name}")
+ 
+     except httpx.HTTPStatusError as e:
+         return [TextContent(type="text", text=f"Memory API error: {e.response.status_code} - {e.response.text}")]
+     except httpx.RequestError as e:
+         return [TextContent(type="text", text=f"Memory API unavailable ({MEMORY_API_URL}). Is EstudioHC Memory Suite running? Error: {e}")]
+     except asyncio.TimeoutError:
+         return [TextContent(type="text", text=f"Operation timed out while connecting to Memory API ({MEMORY_API_URL}).")]
+     except Exception as e:

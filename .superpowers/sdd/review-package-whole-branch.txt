@@ -1,0 +1,585 @@
+=== COMMITS 55e6033..HEAD ===
+cce2467 test(api): pytest harness + CI workflow
+d70e647 feat(api): optional API key auth + rate limit on /api/hermes
+50fbf09 fix(mcp-memory): point summarizer at Qwen3-1.7B on port 11435
+eb39ce8 fix(scripts): correct DB path in backup.sh
+41b4295 fix(mcp-memory): index FAISS with real memory id on add and consolidate
+332ff13 fix(api): return memory id from /remember and readable status text
+
+=== STAT ===
+ .github/workflows/ci.yml             | 20 ++++++++++++++++++++
+ apps/api/pyproject.toml              | 13 ++++++++++++-
+ apps/api/src/config.py               |  4 ++++
+ apps/api/src/main.py                 | 22 ++++++++++++----------
+ apps/api/src/routers/memory.py       | 17 ++++++++++++++---
+ apps/api/src/security.py             | 27 +++++++++++++++++++++++++++
+ apps/api/tests/conftest.py           | 28 ++++++++++++++++++++++++++++
+ apps/api/tests/test_memory.py        | 31 +++++++++++++++++++++++++++++++
+ apps/api/tests/test_security.py      | 19 +++++++++++++++++++
+ apps/mcp-memory/src/memory_server.py | 14 ++++++++++----
+ apps/mcp-memory/src/summarizer.py    |  8 +++++---
+ scripts/backup.sh                    |  2 +-
+ 12 files changed, 183 insertions(+), 22 deletions(-)
+
+=== DIFF ===
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..b534e91
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,20 @@
++name: CI
++on:
++  push:
++    branches: [master]
++  pull_request:
++
++jobs:
++  test-api:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.11"
++      - name: Install deps
++        working-directory: apps/api
++        run: pip install -e ".[dev]"
++      - name: Run tests
++        working-directory: apps/api
++        run: python -m pytest -v
+diff --git a/apps/api/pyproject.toml b/apps/api/pyproject.toml
+index 9a72e20..c5de4d4 100644
+--- a/apps/api/pyproject.toml
++++ b/apps/api/pyproject.toml
+@@ -13,16 +13,27 @@ dependencies = [
+     "pydantic>=2.10.0",
+     "pydantic-settings>=2.7.0",
+     "python-multipart>=0.0.18",
+     "sse-starlette>=2.2.1",
+ ]
+ 
+ [build-system]
+ requires = ["setuptools>=75.0"]
+ build-backend = "setuptools.build_meta"
+ 
++[project.optional-dependencies]
++dev = [
++    "pytest>=8.0.0",
++    "pytest-asyncio>=0.23.0",
++    "httpx>=0.27.0",
++]
++
+ [tool.setuptools.packages.find]
+ where = ["src"]
+ include = ["src*"]
+ 
+ [tool.setuptools.package-data]
+-"*" = ["*.ini"]
+\ No newline at end of file
++"*" = ["*.ini"]
++
++[tool.pytest.ini_options]
++asyncio_mode = "auto"
++testpaths = ["tests"]
+\ No newline at end of file
+diff --git a/apps/api/src/config.py b/apps/api/src/config.py
+index df51c2d..d2c7fa2 100644
+--- a/apps/api/src/config.py
++++ b/apps/api/src/config.py
+@@ -24,12 +24,16 @@ class Settings(BaseSettings):
+     # CORS
+     CORS_ORIGINS: list[str] = ["*"]
+ 
+     # Paths
+     DASHBOARD_PATH: str = str(Path(__file__).parent.parent.parent / "dashboard" / "static")
+     HERMES_CLI: str = str(Path.home() / ".local/bin/hermes")
+ 
+     # Hermes AI
+     HERMES_TIMEOUT: int = 120
+ 
++    # Auth
++    API_KEY: str = ""  # vazio = auth desabilitado (dev)
++    RATE_LIMIT_PER_MIN: int = 10
++
+ 
+ settings = Settings()
+\ No newline at end of file
+diff --git a/apps/api/src/main.py b/apps/api/src/main.py
+index 660af53..c86fdc8 100644
+--- a/apps/api/src/main.py
++++ b/apps/api/src/main.py
+@@ -1,19 +1,20 @@
+ from fastapi import FastAPI, Depends
+ from fastapi.middleware.cors import CORSMiddleware
+ from fastapi.staticfiles import StaticFiles
+ from fastapi.responses import FileResponse
+ from pathlib import Path
+ 
+ from .config import settings
+ from .database import get_db, init_db
+ from .schemas import MemoryEntry
++from .security import require_api_key, rate_limiter
+ from .routers import memory, agenda, notas, projetos, estacoes, status, hermes, tarefas
+ 
+ description = """
+ EstudioHC Central API ÔÇö C├®rebro central do ecossistema EstudioHC.
+ 
+ Gerencia mem├│ria persistente de agentes, agenda, projetos, notas,
+ di├írios, tarefas e esta├º├Áes de trabalho via Tailscale.
+ """
+ 
+ app = FastAPI(
+@@ -29,45 +30,46 @@ app = FastAPI(
+ )
+ 
+ app.add_middleware(
+     CORSMiddleware,
+     allow_origins=settings.CORS_ORIGINS,
+     allow_credentials=True,
+     allow_methods=["*"],
+     allow_headers=["*"],
+ )
+ 
+-app.include_router(memory.router)
+-app.include_router(agenda.router)
+-app.include_router(notas.router)
+-app.include_router(projetos.router)
+-app.include_router(estacoes.router)
+-app.include_router(hermes.router)
+-app.include_router(tarefas.router)
+-app.include_router(status.router)
++for _r in (memory, agenda, notas, projetos, estacoes, tarefas):
++    app.include_router(_r.router, dependencies=[Depends(require_api_key)])
++app.include_router(hermes.router, dependencies=[Depends(require_api_key), Depends(rate_limiter)])
++app.include_router(status.router)  # status fica aberto (healthcheck)
+ 
+ 
+ @app.on_event("startup")
+ async def on_startup():
+     await init_db()
+ 
+ 
+-@app.post("/remember")
++@app.post("/remember", dependencies=[Depends(require_api_key)])
+ async def remember_backward(entry: MemoryEntry, db=Depends(get_db)):
+     return await memory.save_memory(entry, db)
+ 
+ 
+-@app.get("/recall/{project}")
++@app.get("/recall/{project}", dependencies=[Depends(require_api_key)])
+ async def recall_backward(project: str, limit: int = 10, db=Depends(get_db)):
+     return await memory.get_memory(project, limit, db)
+ 
+ 
++@app.get("/status/{project}", dependencies=[Depends(require_api_key)])
++async def status_backward(project: str, db=Depends(get_db)):
++    return await memory.get_status(project, db)
++
++
+ dashboard_path = Path(settings.DASHBOARD_PATH)
+ if dashboard_path.exists():
+     @app.get("/")
+     async def get_dashboard_index():
+         index_file = dashboard_path / "index.html"
+         if index_file.exists():
+             return FileResponse(str(index_file))
+         return {"error": "index.html not found"}
+ 
+     app.mount("/", StaticFiles(directory=str(dashboard_path), html=True), name="dashboard")
+diff --git a/apps/api/src/routers/memory.py b/apps/api/src/routers/memory.py
+index 2c53894..74ef93c 100644
+--- a/apps/api/src/routers/memory.py
++++ b/apps/api/src/routers/memory.py
+@@ -1,10 +1,11 @@
++import json
+ from datetime import datetime
+ 
+ from fastapi import APIRouter, Depends, HTTPException
+ from sqlalchemy import select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from ..database import get_db
+ from ..models.agent_memory import AgentMemory
+ from ..schemas import MemoryEntry
+ 
+@@ -15,21 +16,21 @@ router = APIRouter(prefix="/memory", tags=["Memory"])
+ async def save_memory(entry: MemoryEntry, db: AsyncSession = Depends(get_db)):
+     mem = AgentMemory(
+         timestamp=datetime.now().isoformat(),
+         agent_name=entry.agent_name,
+         project=entry.project,
+         category=entry.category,
+         content=entry.content,
+     )
+     db.add(mem)
+     await db.commit()
+-    return {"status": "success"}
++    return {"status": "success", "id": mem.id}
+ 
+ 
+ @router.get("/recall/{project}")
+ async def get_memory(project: str, limit: int = 10, db: AsyncSession = Depends(get_db)):
+     result = await db.execute(
+         select(AgentMemory)
+         .where(AgentMemory.project == project)
+         .order_by(AgentMemory.timestamp.desc())
+         .limit(limit)
+     )
+@@ -40,29 +41,39 @@ async def get_memory(project: str, limit: int = 10, db: AsyncSession = Depends(g
+             "timestamp": r.timestamp,
+             "agent_name": r.agent_name,
+             "project": r.project,
+             "category": r.category,
+             "content": r.content,
+         }
+         for r in rows
+     ]
+ 
+ 
++def _readable(content: str) -> str:
++    try:
++        parsed = json.loads(content)
++        if isinstance(parsed, dict) and parsed.get("s"):
++            return parsed["s"]
++    except (json.JSONDecodeError, TypeError):
++        pass
++    return content
++
++
+ @router.get("/status/{project}")
+ async def get_status(project: str, db: AsyncSession = Depends(get_db)):
+     result_pending = await db.execute(
+         select(AgentMemory.content)
+         .where(AgentMemory.project == project, AgentMemory.category == "task_pending")
+         .order_by(AgentMemory.timestamp.desc())
+         .limit(5)
+     )
+     result_completed = await db.execute(
+         select(AgentMemory.content)
+         .where(AgentMemory.project == project, AgentMemory.category == "task_completed")
+         .order_by(AgentMemory.timestamp.desc())
+         .limit(3)
+     )
+     return {
+         "project": project,
+-        "pending": [r[0] for r in result_pending.fetchall()],
+-        "completed": [r[0] for r in result_completed.fetchall()],
++        "pending": [_readable(r[0]) for r in result_pending.fetchall()],
++        "completed": [_readable(r[0]) for r in result_completed.fetchall()],
+     }
+\ No newline at end of file
+diff --git a/apps/api/src/security.py b/apps/api/src/security.py
+new file mode 100644
+index 0000000..b11474c
+--- /dev/null
++++ b/apps/api/src/security.py
+@@ -0,0 +1,27 @@
++from time import monotonic
++from collections import defaultdict, deque
++from fastapi import Header, HTTPException, Request
++
++from .config import settings
++
++
++def require_api_key(x_api_key: str = Header(default="")):
++    if settings.API_KEY and x_api_key != settings.API_KEY:
++        raise HTTPException(status_code=401, detail="Invalid API key")
++    return True
++
++
++_requests: dict[str, deque[float]] = defaultdict(deque)
++
++
++async def rate_limiter(request: Request):
++    if not settings.API_KEY:
++        return
++    ip = request.client.host if request.client else "unknown"
++    now = monotonic()
++    dq = _requests[ip]
++    while dq and now - dq[0] > 60:
++        dq.popleft()
++    if len(dq) >= settings.RATE_LIMIT_PER_MIN:
++        raise HTTPException(status_code=429, detail="Rate limit exceeded")
++    dq.append(now)
+diff --git a/apps/api/tests/conftest.py b/apps/api/tests/conftest.py
+new file mode 100644
+index 0000000..cdd6bd8
+--- /dev/null
++++ b/apps/api/tests/conftest.py
+@@ -0,0 +1,28 @@
++# apps/api/tests/conftest.py
++import os
++import shutil
++import tempfile
++
++_tmp = tempfile.mkdtemp(prefix="estudiohc_test_")
++os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_tmp}/test.db"
++os.environ["API_KEY"] = "test-key"
++
++import pytest_asyncio
++from httpx import ASGITransport, AsyncClient
++
++from src.database import init_db
++from src.main import app
++
++
++@pytest_asyncio.fixture(scope="session")
++async def _setup_db():
++    await init_db()
++    yield
++    shutil.rmtree(_tmp, ignore_errors=True)
++
++
++@pytest_asyncio.fixture
++async def client(_setup_db):
++    transport = ASGITransport(app=app)
++    async with AsyncClient(transport=transport, base_url="http://test") as c:
++        yield c
+diff --git a/apps/api/tests/test_memory.py b/apps/api/tests/test_memory.py
+new file mode 100644
+index 0000000..2dfead0
+--- /dev/null
++++ b/apps/api/tests/test_memory.py
+@@ -0,0 +1,31 @@
++import json
++from httpx import AsyncClient
++
++HEADERS = {"X-API-Key": "test-key"}
++
++
++async def test_remember_returns_id(client: AsyncClient):
++    resp = await client.post("/remember", headers=HEADERS, json={
++        "agent_name": "opencode",
++        "project": "opencode",
++        "category": "context",
++        "content": json.dumps({"s": "fato X", "r": None, "c": True}),
++    })
++    assert resp.status_code == 200
++    body = resp.json()
++    assert body["status"] == "success"
++    assert isinstance(body["id"], int)
++    assert body["id"] > 0
++
++
++async def test_status_returns_readable_text(client: AsyncClient):
++    await client.post("/remember", headers=HEADERS, json={
++        "agent_name": "opencode",
++        "project": "opencode",
++        "category": "task_pending",
++        "content": json.dumps({"s": "Tarefa pendente legivel", "r": None, "c": True}),
++    })
++    resp = await client.get("/status/opencode", headers=HEADERS)
++    assert resp.status_code == 200
++    body = resp.json()
++    assert body["pending"] == ["Tarefa pendente legivel"]
+diff --git a/apps/api/tests/test_security.py b/apps/api/tests/test_security.py
+new file mode 100644
+index 0000000..5de80ca
+--- /dev/null
++++ b/apps/api/tests/test_security.py
+@@ -0,0 +1,19 @@
++from httpx import AsyncClient
++
++
++async def test_api_key_required_when_configured(client: AsyncClient):
++    resp = await client.post("/remember", json={
++        "agent_name": "opencode", "project": "x",
++        "category": "context", "content": "sem chave",
++    })
++    assert resp.status_code == 401
++
++
++async def test_api_key_accepted(client: AsyncClient):
++    resp = await client.post(
++        "/remember",
++        json={"agent_name": "opencode", "project": "x",
++              "category": "context", "content": "com chave"},
++        headers={"X-API-Key": "test-key"},
++    )
++    assert resp.status_code == 200
+diff --git a/apps/mcp-memory/src/memory_server.py b/apps/mcp-memory/src/memory_server.py
+index 7a018f6..b8ff6aa 100644
+--- a/apps/mcp-memory/src/memory_server.py
++++ b/apps/mcp-memory/src/memory_server.py
+@@ -9,20 +9,21 @@ import httpx
+ from mcp.server import Server, NotificationOptions
+ from mcp.server.models import InitializationOptions
+ from mcp.types import Tool, TextContent
+ from mcp.server.stdio import stdio_server
+ 
+ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ from summarizer import summarize as llm_summarize
+ import embedder as vec_store
+ 
+ MEMORY_API_URL = os.getenv("MEMORY_API_URL", "http://localhost:5050")
++MEMORY_API_KEY = os.getenv("MEMORY_API_KEY", "")
+ SUMMARIZE_THRESHOLD = int(os.getenv("MEMORY_SUMMARIZE_THRESHOLD", "60"))
+ MAX_INJECT = int(os.getenv("MEMORY_MAX_INJECT", "3"))
+ DECAY_DAYS = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
+ HYBRID_RRF_K = int(os.getenv("HYBRID_RRF_K", "60"))
+ 
+ # Token budget enforcement
+ MEMORY_MAX_TOKENS = int(os.getenv("MEMORY_MAX_TOKENS", "2048"))
+ MEMORY_INJECT_TOKENS = int(os.getenv("MEMORY_INJECT_TOKENS", "1024"))
+ 
+ 
+@@ -131,22 +132,25 @@ def score_memory(m: dict, query: str = "", category_filter: str = "") -> float:
+ 
+     cat_score = 1.0
+     if category_filter and category_filter != "context":
+         cat_score = 3.0 if cat == category_filter else 0.5
+ 
+     score = decay * 0.4 + kw_score * 0.35 + cat_score * 0.25
+     return round(score, 4)
+ 
+ 
+ async def call_api(method: str, path: str, **kwargs):
++    headers = kwargs.pop("headers", {})
++    if MEMORY_API_KEY:
++        headers["X-API-Key"] = MEMORY_API_KEY
+     async with httpx.AsyncClient(timeout=10) as client:
+-        resp = await client.request(method, f"{MEMORY_API_URL}{path}", **kwargs)
++        resp = await client.request(method, f"{MEMORY_API_URL}{path}", headers=headers, **kwargs)
+         resp.raise_for_status()
+         return resp.json()
+ 
+ 
+ def summarize_blocking(text: str) -> str:
+     try:
+         import concurrent.futures
+         with concurrent.futures.ThreadPoolExecutor() as pool:
+             future = pool.submit(llm_summarize, text)
+             return future.result(timeout=35)
+@@ -286,22 +290,22 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
+                 "agent_name": "opencode",
+                 "project": project,
+                 "category": category,
+                 "content": json.dumps({
+                     "s": summary,
+                     "r": raw if raw else None,
+                     "c": True,
+                 }, ensure_ascii=False),
+             }
+             result = await call_api("POST", "/remember", json=payload)
+-
+-            memory_id = f"{result.get('id', '')}|{category}"
++            mem_id = result.get("id") or f"local_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
++            memory_id = f"{mem_id}|{category}"
+             vec_text = summary or content
+             await asyncio.to_thread(vec_store.add, vec_text, memory_id)
+ 
+             suffix = f" (summarized: {len(summary)} vs {len(content)} chars)" if raw else ""
+             return [TextContent(type="text", text=f"Memory saved in [{project}]{suffix}")]
+ 
+         elif name == "search_memory":
+             project = arguments.get("project", "opencode")
+             query = arguments.get("query", "")
+             category_filter = arguments.get("category", "")
+@@ -467,21 +471,23 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
+                     "agent_name": "opencode",
+                     "project": project,
+                     "category": item["category"],
+                     "content": json.dumps({
+                         "s": content,
+                         "r": item["content"] if len(item["content"]) > len(content) * 1.3 else None,
+                         "c": True,
+                     }, ensure_ascii=False),
+                 }
+                 try:
+-                    await call_api("POST", "/remember", json=payload)
++                    result = await call_api("POST", "/remember", json=payload)
++                    mem_id = result.get("id") or f"local_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
++                    await asyncio.to_thread(vec_store.add, content, f"{mem_id}|{item['category']}")
+                     saved += 1
+                 except Exception as e:
+                     print(f"[memory] consolidate save failed: {e}", file=sys.stderr)
+ 
+             return [TextContent(type="text", text=f"Consolidated {saved}/{len(to_persist)} items to [{project}].")]
+ 
+         else:
+             raise ValueError(f"Unknown tool: {name}")
+ 
+     except httpx.HTTPStatusError as e:
+diff --git a/apps/mcp-memory/src/summarizer.py b/apps/mcp-memory/src/summarizer.py
+index 66e7c76..878448c 100644
+--- a/apps/mcp-memory/src/summarizer.py
++++ b/apps/mcp-memory/src/summarizer.py
+@@ -1,45 +1,47 @@
+ import json
++import os
+ import re
+ import urllib.request
+ import urllib.error
+ 
+-KOBOLD_API = "http://localhost:11434/v1/chat/completions"
++SUMMARIZER_API = os.getenv("SUMMARIZER_API", "http://localhost:11435/v1/chat/completions")
++SUMMARIZER_MODEL = os.getenv("SUMMARIZER_MODEL", "Qwen3-1.7B")
+ MAX_OUTPUT_TOKENS = 60
+ TIMEOUT = 30
+ 
+ 
+ def summarize(text: str, category: str = "context") -> str:
+     if not text or len(text) < 60:
+         return text
+ 
+     if len(text) > 2000:
+         text = text[:2000] + " [...]"
+ 
+     system_prompt = (
+         "Summarize concisely. Output ONLY 1-2 sentences with the key "
+         "facts, entities, numbers, and decisions. No explanations."
+     )
+ 
+     payload = {
+-        "model": "koboldcpp",
++        "model": SUMMARIZER_MODEL,
+         "messages": [
+             {"role": "system", "content": system_prompt},
+             {"role": "user", "content": text},
+         ],
+         "max_tokens": MAX_OUTPUT_TOKENS,
+         "temperature": 0.2,
+         "top_p": 0.9,
+     }
+ 
+     req = urllib.request.Request(
+-        KOBOLD_API,
++        SUMMARIZER_API,
+         data=json.dumps(payload).encode(),
+         headers={"Content-Type": "application/json"},
+         method="POST",
+     )
+ 
+     try:
+         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+             result = json.loads(resp.read().decode())
+             summary = result["choices"][0]["message"]["content"].strip()
+             summary = re.sub(r"<think>.*?</think>", "", summary, flags=re.DOTALL).strip()
+diff --git a/scripts/backup.sh b/scripts/backup.sh
+index aa4159d..64b067c 100755
+--- a/scripts/backup.sh
++++ b/scripts/backup.sh
+@@ -4,21 +4,21 @@
+ #
+ # Uso:
+ #   ./scripts/backup.sh                    # backup normal
+ #   ./scripts/backup.sh --dry-run          # simula sem copiar
+ #   DRY_RUN=1 ./scripts/backup.sh          # via env
+ 
+ set -euo pipefail
+ 
+ REPO_DIR="$HOME/Apps/EstudioHC-Memory-Suite"
+ BACKUP_DIR="$REPO_DIR/backups"
+-DB="$REPO_DIR/server/estudiohc_memory.db"
++DB="$REPO_DIR/data/estudiohc.db"
+ FAISS="$REPO_DIR/apps/mcp-memory/src/.faiss_index.pkl"
+ RETENTION_DAYS=7
+ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+ 
+ DRY_RUN="${DRY_RUN:-false}"
+ if [ "${1:-}" = "--dry-run" ]; then DRY_RUN=true; fi
+ 
+ mkdir -p "$BACKUP_DIR"
+ 
+ backup_file() {

@@ -1,0 +1,104 @@
+=== COMMITS d70e647..cce2467 ===
+cce2467 test(api): pytest harness + CI workflow
+
+=== STAT ===
+ .github/workflows/ci.yml   | 20 ++++++++++++++++++++
+ apps/api/pyproject.toml    | 10 +++++++++-
+ apps/api/tests/conftest.py |  2 ++
+ 3 files changed, 31 insertions(+), 1 deletion(-)
+
+=== DIFF ===
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..b534e91
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,20 @@
++name: CI
++on:
++  push:
++    branches: [master]
++  pull_request:
++
++jobs:
++  test-api:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.11"
++      - name: Install deps
++        working-directory: apps/api
++        run: pip install -e ".[dev]"
++      - name: Run tests
++        working-directory: apps/api
++        run: python -m pytest -v
+diff --git a/apps/api/pyproject.toml b/apps/api/pyproject.toml
+index 8b48198..c5de4d4 100644
+--- a/apps/api/pyproject.toml
++++ b/apps/api/pyproject.toml
+@@ -13,19 +13,27 @@ dependencies = [
+     "pydantic>=2.10.0",
+     "pydantic-settings>=2.7.0",
+     "python-multipart>=0.0.18",
+     "sse-starlette>=2.2.1",
+ ]
+ 
+ [build-system]
+ requires = ["setuptools>=75.0"]
+ build-backend = "setuptools.build_meta"
+ 
++[project.optional-dependencies]
++dev = [
++    "pytest>=8.0.0",
++    "pytest-asyncio>=0.23.0",
++    "httpx>=0.27.0",
++]
++
+ [tool.setuptools.packages.find]
+ where = ["src"]
+ include = ["src*"]
+ 
+ [tool.setuptools.package-data]
+ "*" = ["*.ini"]
+ 
+ [tool.pytest.ini_options]
+-asyncio_mode = "auto"
+\ No newline at end of file
++asyncio_mode = "auto"
++testpaths = ["tests"]
+\ No newline at end of file
+diff --git a/apps/api/tests/conftest.py b/apps/api/tests/conftest.py
+index af14a78..cdd6bd8 100644
+--- a/apps/api/tests/conftest.py
++++ b/apps/api/tests/conftest.py
+@@ -1,26 +1,28 @@
+ # apps/api/tests/conftest.py
+ import os
++import shutil
+ import tempfile
+ 
+ _tmp = tempfile.mkdtemp(prefix="estudiohc_test_")
+ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_tmp}/test.db"
+ os.environ["API_KEY"] = "test-key"
+ 
+ import pytest_asyncio
+ from httpx import ASGITransport, AsyncClient
+ 
+ from src.database import init_db
+ from src.main import app
+ 
+ 
+ @pytest_asyncio.fixture(scope="session")
+ async def _setup_db():
+     await init_db()
+     yield
++    shutil.rmtree(_tmp, ignore_errors=True)
+ 
+ 
+ @pytest_asyncio.fixture
+ async def client(_setup_db):
+     transport = ASGITransport(app=app)
+     async with AsyncClient(transport=transport, base_url="http://test") as c:
+         yield c

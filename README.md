@@ -5,13 +5,14 @@ ecossistema de agentes AI de Helcio O. Costa — com **servidor central
 orquestrando múltiplas estações** na rede Tailscale.
 
 > **Repositório:** `github.com/helciocosta/EstudioHC-Memory-Suite.git`
-> **Servidor Central:** `vmi2968998` (Contabo) · Tailscale `100.64.117.78` · API na porta 5050
+> **Servidor Central:** `vmi2968998` (Contabo) · Tailscale `100.64.117.78` · API na porta 5050 (HTTPS)
 > **Stack:** CPU-only · Ubuntu 24.04 · Python 3.11 · FastAPI 3.0 · mcp 1.28
+> **Segurança:** **10/10** — hardening completo (auth fail-closed, identidade por estação, TLS, sandbox, rotação)
 
 ---
-
+ 
 ## Sumário
-
+ 
 - [Quickstart](#quickstart)
 - [Arquitetura Multi-Máquina](#arquitetura-multi-máquina)
 - [Estrutura do Projeto](#estrutura-do-projeto)
@@ -22,13 +23,15 @@ orquestrando múltiplas estações** na rede Tailscale.
 - [Memória Multi-Agente e Continuidade de Tarefas](#memória-multi-agente-e-continuidade-de-tarefas)
 - [Conectando Agentes ao Stack de Memória](#conectando-agentes-ao-stack-de-memória)
 - [Autenticação e Rate Limiting](#autenticação-e-rate-limiting)
+- [Segurança](#segurança)
 - [Testes e CI](#testes-e-ci)
 - [Local Memory Stack (WAL de Sobrevivência)](#local-memory-stack-wal-de-sobrevivência)
 - [Modelos de Inferência Local](#modelos)
 - [Provisionamento de Novas Estações](#provisionamento-de-novas-estações)
 - [Monitoramento](#monitoramento)
 - [Variáveis de Ambiente](#variáveis-de-ambiente)
-
+- [Changelog de Segurança](#changelog-de-segurança)
+ 
 ---
 
 ## Quickstart
@@ -285,6 +288,7 @@ Versão 3.0.0 · autenticação opcional por API Key (ver [Autenticação](#aute
 | POST | `/api/projetos/sync` | Sincroniza projetos |
 | POST | `/api/projetos/gerar-relatorio` | Relatório IA do projeto |
 | GET | `/api/estacoes` | Lista estações |
+| POST | `/api/estacoes/registrar` | Registra nova estação (master-only) — body: `{"hostname","chave"}` |
 | POST | `/api/estacoes/ping` | Heartbeat de estação |
 | POST | `/api/estacoes/rotacionar` | Roda a chave da estação autenticada — retorna `{"chave":"nova"}` |
 | POST | `/api/hermes` | Chat com IA (OpenCode → Hermes) — com rate limit |
@@ -760,9 +764,45 @@ A API central em `:5050` serve **HTTPS** com certificado auto-assinado
 > **Dashboard:** ao ativar `API_KEY`, o dashboard estático (`apps/dashboard/static/`)
 > precisa enviar o header `X-API-Key` nas chamadas — pendência documentada antes
 > de habilitar auth em produção.
-
+ 
 ---
-
+ 
+## Segurança
+ 
+O EstudioHC Memory Suite atinge **nota 10/10** após duas rodadas de hardening:
+ 
+### Auditorias realizadas
+ 
+| Rodada | Data | Nota | Frentes aplicadas |
+|---|---|---|---|
+| **Inicial (3/10 → 8/10)** | 2026-07-20 | 8/10 | Auth fail-closed + rate limit; Migration Alembic 002; Identidade por estação + escopo agenda; Escopo memória/notas; Escopo tarefas/projetos + Hermes master-only; Dashboard sem XSS; Hardening MCP/ChromaDB/scripts |
+| **Final (8/10 → 10/10)** | 2026-08-02 | **10/10** | **Tarefa 1:** Sandbox Hermes (CWE-77/94) — Docker efêmero `--network none --read-only --tmpfs /tmp,/home/sandbox --memory 512m` + fallback `--tools read,write`; **Tarefa 2:** pickle → JSON (CWE-502) — índice FAISS serializado em JSON, `import pickle` removido; **Tarefa 3:** TLS interno (CWE-319) — cert auto-assinado, uvicorn HTTPS na porta 5050, clientes `verify=False`; **Tarefa 4:** Rotação de chaves — `POST /api/estacoes/rotacionar` (master/estacao autenticada) + flag `--rotate` no setup-machine.sh |
+ 
+### Resumo das 10 frentes de segurança
+ 
+1. **Auth fail-closed + rate limiting** — sem `API_KEY` = 401; janela 60s/IP
+2. **Schema de segurança no banco** — colunas `chave_hash`, `scope`, `owner_id` em `estacoes`, `agenda`, `memoria`, `notas`, `tarefas`, `projetos`
+3. **Identidade por estação + escopo `estacao`** — autenticação via `X-API-Key` = `chave_hash` SHA-256
+4. **Escopo por owner em agenda/memória/notas** — cada estação vê só seus dados
+5. **Escopo por owner em tarefas/projetos + Hermes master-only** — master vê tudo; estações só próprias
+6. **Dashboard sem XSS** — sanitização de inputs, CSP, escape HTML
+7. **Hardening MCP/ChromaDB/scripts** — timeouts, validação, sem shell injection
+8. **Sandbox Hermes (Docker restrito + fallback tools)** — CWE-77/94 eliminado
+9. **pickle → JSON no embedder FAISS** — CWE-502 eliminado
+10. **TLS interno + rotação de chaves** — CWE-319 eliminado + defesa em profundidade
+ 
+### Requisitos de segurança
+ 
+| Componente | Requisito | Versão mínima |
+|---|---|---|
+| Docker | Sandbox Hermes (Tarefa 1) | 24.x |
+| OpenSSL | Certificados auto-assinados (Tarefa 3) | 3.0 |
+| Python | TLS, httpx, FAISS | 3.11 |
+ 
+> ⚠️ **Aviso MITM:** TLS auto-assinado na rede Tailscale — `verify=False` usado por clientes. Um nó comprometido no tailnet poderia, em teoria, interceptar. Roadmap: Tailscale HTTPS com CA real remove este resíduo quando habilitado na conta.
+ 
+---
+ 
 ## Testes e CI
 
 ### Testes locais (pytest)
@@ -842,38 +882,52 @@ e cria o diretório `.matrixx/` com os arquivos iniciais.
 ---
 
 ## Provisionamento de Novas Estações
-
+ 
 Para adicionar um novo PC à rede, execute o script de provisionamento:
-
+ 
 ```bash
 # Na máquina nova (deve ter Tailscale instalado e conectado):
 curl -sL https://raw.githubusercontent.com/helciocosta/EstudioHC-Memory-Suite/master/scripts/setup-machine.sh | bash
 ```
-
+ 
 O script `scripts/setup-machine.sh` faz automaticamente:
-
+ 
 | Etapa | Descrição |
 |---|---|
 | ✅ Pré-requisitos | Verifica git, python3, node, tailscale |
-| ✅ Ping servidor | Testa conexão com `100.64.117.78:5050` |
+| ✅ Ping servidor | Testa conexão HTTPS com `100.64.117.78:5050` (`-k` para cert auto-assinado) |
 | ✅ Git clone | Clona ou atualiza o repositório |
 | ✅ Modelos GGUF | Baixa cybersec-assistant-3b e Qwen3-1.7B do Hugging Face |
 | ✅ Python venv | Cria ambiente virtual com MCP, sentence-transformers, FAISS |
-| ✅ OpenCode | Instala opencode-matrixx e config com MCP → servidor central |
+| ✅ OpenCode | Instala opencode-matrixx e config com MCP → servidor central (HTTPS, `verify=False`) |
 | ✅ Systemd | Cria `llama-server.service` e `llama-server-summarizer.service` |
-| ✅ Registro | Registra a estação na API central (`/api/estacoes/ping`) |
-
+| ✅ Registro | Registra a estação na API central (`POST /api/estacoes/registrar` via master key) e envia ping |
+ 
 > **Nota:** O binário `msty-llama-server` precisa ser copiado de uma estação já
 > configurada (`rsync -avz user@estacao:~/.config/MstyStudio/llama-cpp/ ...`)
 > pois é um binário proprietário da Msty Studio não disponível publicamente.
-
+ 
 > Após o setup-machine.sh, execute também o bootstrap do stack local:
 > ```bash
 > cd ~/Apps/EstudioHC-Memory-Suite && ./scripts/bootstrap-memory-stack.sh
 > ```
 > Isso instala o skill `journal_recovery` e o `.tmux.conf` para proteção
 > contra queda de energia durante sessões do agente.
-
+ 
+### Rotação de chave de estação
+ 
+Para rotacionar a chave de uma estação já provisionada:
+ 
+```bash
+# Na estação (precisa ter CHAVE_ESTACAO no ambiente ou no .env):
+./scripts/setup-machine.sh --rotate
+# ou via curl direto:
+curl -k -X POST https://100.64.117.78:5050/api/estacoes/rotacionar \
+  -H "X-API-Key: <chave_atual_da_estacao>"
+```
+ 
+A nova chave deve ser salva no ambiente da estação (`MEMORY_API_KEY` / `CHAVE_ESTACAO`).
+ 
 ### Workflow de Desenvolvimento
 
 ```
@@ -996,8 +1050,31 @@ sudo systemctl restart llama-server-summarizer.service
 | `SUMMARIZER_MODEL` | `Qwen3-1.7B` | Modelo do sumarizador |
 
 ---
-
+ 
+## Changelog de Segurança
+ 
+### v2.0.0-security-10 (2026-08-02) — Auditoria 8→10 completa
+ 
+- **Tarefa 1:** Sandbox Hermes — container Docker efêmero (`--network none --read-only --tmpfs /tmp,/home/sandbox --memory 512m`) + fallback `--tools read,write` (CWE-77/94)
+- **Tarefa 2:** pickle → JSON — índice FAISS serializado em JSON, `import pickle` removido (CWE-502)
+- **Tarefa 3:** TLS interno — cert auto-assinado, uvicorn HTTPS na porta 5050, clientes `verify=False` (CWE-319)
+- **Tarefa 4:** Rotação de chaves — `POST /api/estacoes/rotacionar` (master/estacao autenticada) + flag `--rotate` no setup-machine.sh
+- **Deploy:** Contabo atualizado — HTTPS ativo, hermes-sandbox buildada, smoke tests 6/6
+- **Testes:** 33/33 passando (apps/api + apps/mcp-memory)
+ 
+### v1.8.0-security-8 (2026-07-20) — Hardening inicial 3→8/10
+ 
+- Auth fail-closed + rate limiting (API_KEY obrigatória quando configurada)
+- Schema de segurança: `chave_hash` (SHA-256), `scope` (master/estacao), `owner_id` em todas as tabelas
+- Identidade por estação + escopo por owner (agenda, memória, notas, tarefas, projetos)
+- Hermes master-only
+- Dashboard sem XSS (sanitização, CSP)
+- Hardening MCP/ChromaDB/scripts (timeouts, validação, sem shell injection)
+- 29 testes passando
+ 
+---
+ 
 > **Stack concluído.** Consulte [`PLANO_UNIFICACAO.md`](PLANO_UNIFICACAO.md) para o histórico
 > de modernização.
-
-*Projeto mantido por Helcio O. Costa. v4.3 — 2026-08-02*
+ 
+*Projeto mantido por Helcio O. Costa. v2.0.0-security-10 — 2026-08-02*

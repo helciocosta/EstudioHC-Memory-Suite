@@ -36,6 +36,12 @@ dist/
 # FAISS index (binary state, regenerated on startup)
 *.pkl
 .faiss_index.pkl
+.faiss_index.json
+
+# TLS certificates (auto-signed, generated on server)
+*.pem
+*.crt
+*.key
 
 # MatrixX plugin data
 .matrixx/

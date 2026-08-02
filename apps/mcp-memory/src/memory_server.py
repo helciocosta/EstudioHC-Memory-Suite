@@ -18,6 +18,7 @@ import chroma_client as chroma
 
 MEMORY_API_URL = os.getenv("MEMORY_API_URL", "http://localhost:5050")
 MEMORY_API_KEY = os.getenv("MEMORY_API_KEY", "")
+AGENT_NAME = os.getenv("AGENT_NAME", "opencode")
 SUMMARIZE_THRESHOLD = int(os.getenv("MEMORY_SUMMARIZE_THRESHOLD", "60"))
 MAX_INJECT = int(os.getenv("MEMORY_MAX_INJECT", "3"))
 DECAY_DAYS = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
@@ -339,7 +340,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                 raw = content if len(content) > len(summary) * 1.3 else ""
 
             payload = {
-                "agent_name": "opencode",
+                "agent_name": AGENT_NAME,
                 "project": project,
                 "category": category,
                 "content": json.dumps({
@@ -520,7 +521,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                 if not skip_summarize and len(content) >= SUMMARIZE_THRESHOLD:
                     content = await asyncio.to_thread(summarize_blocking, content)
                 payload = {
-                    "agent_name": "opencode",
+                    "agent_name": AGENT_NAME,
                     "project": project,
                     "category": item["category"],
                     "content": json.dumps({

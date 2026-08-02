@@ -12,21 +12,97 @@ orquestrando múltiplas estações** na rede Tailscale.
 
 ## Sumário
 
+- [Quickstart](#quickstart)
 - [Arquitetura Multi-Máquina](#arquitetura-multi-máquina)
 - [Estrutura do Projeto](#estrutura-do-projeto)
 - [Serviços por Máquina](#serviços-por-máquina)
 - [API Central (porta 5050)](#api-central-porta-5050)
 - [MCP Memory Server](#mcp-memory-server)
 - [Documentos por Projeto (ChromaDB)](#documentos-por-projeto-chromadb)
+- [Memória Multi-Agente e Continuidade de Tarefas](#memória-multi-agente-e-continuidade-de-tarefas)
+- [Conectando Agentes ao Stack de Memória](#conectando-agentes-ao-stack-de-memória)
 - [Autenticação e Rate Limiting](#autenticação-e-rate-limiting)
 - [Testes e CI](#testes-e-ci)
 - [Local Memory Stack (WAL de Sobrevivência)](#local-memory-stack-wal-de-sobrevivência)
-- [Infraestrutura de Inferência Local](#infraestrutura-de-inferência-local)
+- [Modelos de Inferência Local](#modelos)
 - [Provisionamento de Novas Estações](#provisionamento-de-novas-estações)
 - [Monitoramento](#monitoramento)
 - [Variáveis de Ambiente](#variáveis-de-ambiente)
 
 ---
+
+## Quickstart
+
+Como colocar o stack no ar em menos de 5 minutos, seja no servidor central ou
+numa máquina de desenvolvimento.
+
+### 1. Rodar a API Central localmente
+
+```bash
+cd apps/api
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 5050
+```
+
+Teste:
+
+```bash
+curl -s http://localhost:5050/api/status
+# {"status":"online","servidor":"central","hermes":true,"opencode":true,"database":"SQLite",...}
+```
+
+> O `DATABASE_URL` default aponta para `~/Apps/EstudioHC-Memory-Suite/data/estudiohc.db`.
+> Para isolar em outro caminho, exporte `DATABASE_URL` antes de subir.
+
+### 2. Rodar o MCP Memory Server localmente
+
+```bash
+cd apps/mcp-memory
+python3 -m venv .venv
+.venv/bin/pip install -e .
+MEMORY_API_URL=http://localhost:5050 .venv/bin/python src/memory_server.py
+```
+
+O servidor inicia no modo MCP STDIO (fica aguardando o cliente). Para testar
+como *cliente*, use o `OpenCode` ou um script de handshake MCP apontando para
+o mesmo binário.
+
+### 3. Rodar os testes
+
+```bash
+cd apps/api
+.venv/bin/python -m pytest -v     # 4 testes: id do /remember, status legível, auth
+```
+
+### 4. Gravar a primeira memória
+
+```bash
+curl -s -X POST http://localhost:5050/remember \
+  -H "Content-Type: application/json" \
+  -d '{"agent_name":"opencode","project":"opencode","category":"context","content":"{\"s\":\"Hello World\",\"r\":null,\"c\":true}"}'
+# {"status":"success","id":1}
+
+curl -s http://localhost:5050/recall/opencode
+# [{"id":1,"timestamp":"...","agent_name":"opencode","project":"opencode",...}]
+```
+
+### 5. Testar a camada de documentos (ChromaDB)
+
+O `chromadb-mcp` precisa estar ativo (porta 8765). Nos testes locais, suba
+primeiro o servidor SSE:
+
+```bash
+# no servidor central (ou estação com o serviço instalado)
+sudo systemctl start chromadb-mcp.service
+curl -s -H "Accept: text/event-stream" http://localhost:8765/mcp   # deve abrir stream SSE
+```
+
+Depois use as tools `doc_add` / `doc_search` do MCP Memory Server — elas
+criam a coleção `docs_<project>` automaticamente no primeiro `doc_add`.
+
+---
+
 
 ## Arquitetura Multi-Máquina
 
@@ -362,6 +438,208 @@ SSE em `http://100.64.117.78:8765/mcp`) para acesso direto às tools do ChromaDB
 
 ---
 
+## Memória Multi-Agente e Continuidade de Tarefas
+
+O EstudioHC é **agnóstico de agente**: qualquer agente de IA que suporte o
+protocolo MCP (OpenCode, Claude Code, Codex, Gemini/Antigravity, Mistral,
+OMP e outros) grava e lê memória no **mesmo** servidor central, sem
+adaptação de código. A única exigência é registrar o `memory_server.py`
+como servidor MCP e apontar `MEMORY_API_URL` para o central.
+
+### Como a memória é gravada (fluxo em qualquer estação)
+
+```
+Agente (OpenCode/Claude/Codex/...)
+   │  1. wm_push → Working Memory local (volátil, budget 2048 tok)
+   │  2. consolidate ou add_memory
+   ▼
+memory_server.py (MCP stdio, roda local na estação)
+   │  3. content ≥ 60 chars? → summarizer.py → llama.cpp :11435 (Qwen3-1.7B)
+   │  4. POST /remember  {agent_name, project, category, content}
+   ▼
+API Central (100.64.117.78:5050)
+   │  5. SQLite (data/estudiohc.db) — fonte única de verdade
+   │  6. retorna id real (ex: 28)
+   ▼
+memory_server.py
+   │  7. FAISS.add(texto, f"{id}|{category}") — índice vetorial local
+```
+
+- **`agent_name`** identifica a origem da memória (`AGENT_NAME` env, default
+  `opencode`) — cada agente registrado com seu próprio valor.
+- **`project`** agrupa memórias por contexto de trabalho (ex: `opencode`,
+  `claude`, `estudiohc`).
+- **`category`** orienta a busca: `task_pending`, `task_completed`,
+  `decision`, `preference`, `context`, `note`.
+- A **Working Memory** é local e volátil; o `consolidate` a move para o LTM
+  central. Para não perder contexto em queda, use o `journal_recovery`
+  (ver [Local Memory Stack](#local-memory-stack-wal-de-sobrevivência)).
+
+### Continuidade: estação A desligada → estação B retoma
+
+O cenário que a suite resolve:
+
+```
+Estação A (membro X)                          Estação B (membro Y)
+  tarefa iniciada  ──────────────────────────▶  mesma tarefa retomada
+  add_memory/consolidate                         search_memory / get_status
+        │                                                │
+        ▼                                                ▼
+  SQLite central (5050) ◀─── dados persistentes ────►  SQLite central (5050)
+  + FAISS index (local da estação A)                   + FAISS index (local da estação B)
+```
+
+1. **Membro X** inicia a tarefa na Estação A e chama `add_memory` (ou
+   `consolidate`). A memória vai para o SQLite central e o FAISS local da A.
+2. **A é desligada.** Nada se perde: os dados já estão no servidor central.
+3. **Membro Y** abre a Estação B, registra o MCP apontando para
+   `100.64.117.78:5050` e pergunta ao agente "retome a tarefa X".
+4. O agente chama `search_memory(project, "tarefa X")` → o MCP da B busca
+   no SQLite (keyword) e, ao subir, **rebuild_vector_index** reconstrói o
+   FAISS local da B via `GET /recall/{project}?limit=200`.
+5. `get_status(project)` mostra as tasks pendentes em texto legível.
+6. A tarefa continua de onde parou — com o histórico da A.
+
+> **Nota de design:** o índice FAISS é **local por estação** e reconstruído
+> no startup do MCP (30s de tolerância). O SQLite central é a verdade;
+> o FAISS é apenas aceleração de ranking vetorial. Qualquer estação nova
+> reconstrói seu índice sozinha.
+
+### Projeto vs. Agente — como separar contextos
+
+Use **`project`** para separar linhas de trabalho, não o agente:
+
+| Projeto | Conteúdo típico |
+|---|---|
+| `opencode` | Memórias das sessões OpenCode |
+| `claude` | Memórias das sessões Claude Code |
+| `estudiohc` | Contexto de manutenção/evolução do próprio stack |
+| `cliente-X` | Projeto de um cliente específico |
+
+O mesmo agente pode operar em vários projetos; o mesmo projeto pode ser
+continuado por qualquer agente/estação.
+
+---
+
+## Conectando Agentes ao Stack de Memória
+
+Todos os agentes conectam da **mesma forma**: registrando `memory_server.py`
+como servidor MCP STDIO, com `MEMORY_API_URL` apontando para o central e
+`AGENT_NAME` identificando o agente. Os arquivos de configuração mudam de
+acordo com a ferramenta, mas o payload é idêntico.
+
+### Opções de conexão
+
+| Opção | Quando usar | Comando/env |
+|---|---|---|
+| **MCP STDIO local** | Agente roda na mesma máquina do repo (estação) | `python3 src/memory_server.py` + `MEMORY_API_URL` |
+| **MCP via SSH** | Agente numa máquina **sem** o repo (ex: Windows → central) | `ssh deploy@100.64.117.78 "cd ... && ./.venv/bin/python src/memory_server.py"` |
+| **MCP STDIO com env** | Passar `AGENT_NAME`/`API_KEY` sem editar código | prefixar `env VAR=val` no comando |
+
+### OpenCode
+
+`~/.config/opencode/opencode.json` (Windows aponta via SSH para o central):
+
+```json
+{
+  "mcp": {
+    "estudiohc-memory": {
+      "type": "local",
+      "command": ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
+        "deploy@100.64.117.78",
+        "cd ~/Apps/EstudioHC-Memory-Suite/apps/mcp-memory && ./.venv/bin/python src/memory_server.py"]
+    }
+  }
+}
+```
+
+Na estação (com o repo presente), direto:
+
+```json
+{
+  "mcp": {
+    "memory": {
+      "type": "local",
+      "command": ["env", "MEMORY_API_URL=http://100.64.117.78:5050",
+        "AGENT_NAME=opencode", "python3", "/home/USER/Apps/EstudioHC-Memory-Suite/apps/mcp-memory/src/memory_server.py"]
+    }
+  }
+}
+```
+
+> O `setup-machine.sh` gera essa configuração automaticamente nas estações.
+
+### Claude Code
+
+`.mcp.json` na raiz do projeto:
+
+```json
+{
+  "mcpServers": {
+    "estudiohc-memory": {
+      "command": "env",
+      "args": ["MEMORY_API_URL=http://100.64.117.78:5050",
+        "AGENT_NAME=claude",
+        "python3", "/home/USER/Apps/EstudioHC-Memory-Suite/apps/mcp-memory/src/memory_server.py"]
+    }
+  }
+}
+```
+
+### Codex (OpenAI)
+
+```bash
+codex mcp add estudiohc-memory -- \
+  env MEMORY_API_URL=http://100.64.117.78:5050 \
+  AGENT_NAME=codex \
+  python3 /home/USER/Apps/EstudioHC-Memory-Suite/apps/mcp-memory/src/memory_server.py
+```
+
+### Gemini CLI / Antigravity (Google)
+
+```bash
+gemini mcp add --tool estudiohc-memory --command \
+  "env MEMORY_API_URL=http://100.64.117.78:5050 AGENT_NAME=gemini python3 /home/USER/Apps/EstudioHC-Memory-Suite/apps/mcp-memory/src/memory_server.py"
+```
+
+### Mistral, OMP e outros agentes MCP
+
+Qualquer agente com cliente MCP registra o mesmo servidor. O padrão é
+sempre:
+
+```
+command: env MEMORY_API_URL=<central> AGENT_NAME=<nome> python3 <repo>/apps/mcp-memory/src/memory_server.py
+```
+
+Se o agente não suporta MCP, use a **API REST diretamente**:
+
+```bash
+# gravar
+curl -s -X POST http://100.64.117.78:5050/remember \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <chave se configurada>" \
+  -d '{"agent_name":"mistral","project":"meuprojeto","category":"context","content":"{\"s\":\"...\",\"r\":null,\"c\":true}"}'
+
+# ler
+curl -s "http://100.64.117.78:5050/recall/meuprojeto?limit=10"
+```
+
+### Verificação rápida de conexão
+
+```bash
+# 1. API central acessível?
+curl -s http://100.64.117.78:5050/api/status
+
+# 2. Agente enxerga as tools?
+#   Em cada cliente MCP: listar tools → deve aparecer add_memory, search_memory,
+#   get_status, wm_*, consolidate, doc_* (12 tools)
+
+# 3. Escrever e ler
+#   add_memory → GET /recall/{project} confirma a memória com agent_name correto
+```
+
+---
+
 ## Autenticação e Rate Limiting
 
 Implementado em `apps/api/src/security.py` e aplicado em `apps/api/src/main.py`.
@@ -604,6 +882,7 @@ sudo systemctl restart llama-server-summarizer.service
 |---|---|---|
 | `MEMORY_API_URL` | `http://localhost:5050` | Endpoint de persistência LTM no servidor central |
 | `MEMORY_API_KEY` | *(vazio)* | Chave para o header `X-API-Key` nas chamadas à API |
+| `AGENT_NAME` | `opencode` | Identifica a origem da memória (`agent_name` gravado no `/remember`) |
 | `MEMORY_MAX_TOKENS` | `2048` | Budget total da Working Memory |
 | `MEMORY_INJECT_TOKENS` | `1024` | Budget por chamada de search_memory |
 | `MEMORY_SUMMARIZE_THRESHOLD` | `60` | Tamanho mínimo (chars) para sumarizar |

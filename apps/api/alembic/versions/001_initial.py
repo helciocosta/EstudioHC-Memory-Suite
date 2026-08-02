@@ -1,9 +1,9 @@
-\"\"\"create initial tables
+"""create initial tables
 
 Revision ID: 001
 Revises:
 Create Date: 2026-06-16
-\"\"\"
+"""
 
 from typing import Sequence, Union
 from alembic import op

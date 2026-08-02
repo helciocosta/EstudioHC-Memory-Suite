@@ -1,7 +1,6 @@
 import os
 import sys
 import json
-import pickle
 import threading
 import numpy as np
 
@@ -13,7 +12,7 @@ NEXT_POS = 0
 _MODEL_LOCK = threading.Lock()
 _MODEL_LOADED = False
 
-INDEX_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".faiss_index.pkl")
+INDEX_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".faiss_index.json")
 EMBED_DIM = 384
 MODEL_LOAD_TIMEOUT = 30  # seconds
 
@@ -155,8 +154,8 @@ def rebuild(texts: list[tuple[str, str]] = None):
 def _save_index():
     data = {"id_map": ID_MAP, "next_pos": NEXT_POS}
     try:
-        with open(INDEX_FILE, "wb") as f:
-            pickle.dump(data, f)
+        with open(INDEX_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
     except Exception as e:
         print(f"[embedder] save index failed: {e}", file=sys.stderr)
 
@@ -165,9 +164,9 @@ def _load_index():
     global ID_MAP, NEXT_POS
     try:
         if os.path.exists(INDEX_FILE):
-            with open(INDEX_FILE, "rb") as f:
-                data = pickle.load(f)
-            ID_MAP = data.get("id_map", {})
+            with open(INDEX_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            ID_MAP = {int(k): v for k, v in data.get("id_map", {}).items()}
             NEXT_POS = data.get("next_pos", 0)
     except Exception as e:
         print(f"[embedder] load index failed: {e}", file=sys.stderr)

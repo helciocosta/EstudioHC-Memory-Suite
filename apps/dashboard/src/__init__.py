@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
-API_URL = os.getenv("API_URL", "http://estudiohc-api:5050")
+API_URL = os.getenv("API_URL", "https://127.0.0.1:5050")
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
 
 app = FastAPI(title="EstudioHC Hub", version="3.0.0")
@@ -42,7 +42,7 @@ async def proxy_api(path: str, request: Request):
     if DASHBOARD_API_KEY:
         headers["X-API-Key"] = DASHBOARD_API_KEY
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(verify=False) as client:
         resp = await client.request(
             method=request.method,
             url=target_url,

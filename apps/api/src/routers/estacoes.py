@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -79,3 +80,20 @@ async def get_estacoes(
         for r in rows
         if r.hostname == identity.estacao
     ]
+
+
+@router.post("/rotacionar", dependencies=[Depends(rate_limiter)])
+async def rotacionar_chave(
+    identity: Identity = Depends(get_current_estacao),
+    db: AsyncSession = Depends(get_db),
+):
+    if identity.scope != "estacao":
+        raise HTTPException(status_code=403, detail="Apenas a própria estação pode rotacionar a própria chave")
+    nova = secrets.token_hex(32)
+    res = await db.execute(select(Estacao).where(Estacao.hostname == identity.estacao))
+    row = res.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Estação não registrada")
+    row.chave_hash = station_key_hash(nova)
+    await db.commit()
+    return {"chave": nova}

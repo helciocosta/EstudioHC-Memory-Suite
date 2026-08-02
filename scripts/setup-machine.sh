@@ -227,6 +227,18 @@ curl -s -k -X POST "${SERVIDOR_URL}/api/estacoes/ping" \
     >/dev/null 2>&1 && info "✅ Ping de estação enviado" \
     || warn "Não foi possível enviar ping. API offline?"
 
+# ── Rotação de chave (--rotate) ─────────────────────────────────
+if [[ "${1:-}" == "--rotate" ]]; then
+  info "Rotacionando chave da estação..."
+  RESP=$(curl -s -k -X POST "${SERVIDOR_URL}/api/estacoes/rotacionar" \
+    -H "X-API-Key: ${CHAVE_ESTACAO}")
+  echo "$RESP" | grep -q '"chave"' || { err "Falha na rotação"; exit 1; }
+  NOVA_CHAVE=$(echo "$RESP" | python3 -c 'import json,sys; print(json.load(sys.stdin)["chave"])')
+  info "Nova chave gerada."
+  echo "Atualize o arquivo de config da estação com MEMORY_API_KEY=${NOVA_CHAVE}"
+  exit 0
+fi
+
 # ── Final ───────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════╗${NC}"

@@ -7,6 +7,7 @@ from pathlib import Path
 from .config import settings
 from .database import get_db, init_db
 from .schemas import MemoryEntry
+from .security import require_api_key, rate_limiter
 from .routers import memory, agenda, notas, projetos, estacoes, status, hermes, tarefas
 
 description = """
@@ -36,14 +37,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(memory.router)
-app.include_router(agenda.router)
-app.include_router(notas.router)
-app.include_router(projetos.router)
-app.include_router(estacoes.router)
-app.include_router(hermes.router)
-app.include_router(tarefas.router)
-app.include_router(status.router)
+for _r in (memory, agenda, notas, projetos, estacoes, tarefas):
+    app.include_router(_r.router, dependencies=[Depends(require_api_key)])
+app.include_router(hermes.router, dependencies=[Depends(require_api_key), Depends(rate_limiter)])
+app.include_router(status.router)  # status fica aberto (healthcheck)
 
 
 @app.on_event("startup")
@@ -51,14 +48,19 @@ async def on_startup():
     await init_db()
 
 
-@app.post("/remember")
+@app.post("/remember", dependencies=[Depends(require_api_key)])
 async def remember_backward(entry: MemoryEntry, db=Depends(get_db)):
     return await memory.save_memory(entry, db)
 
 
-@app.get("/recall/{project}")
+@app.get("/recall/{project}", dependencies=[Depends(require_api_key)])
 async def recall_backward(project: str, limit: int = 10, db=Depends(get_db)):
     return await memory.get_memory(project, limit, db)
+
+
+@app.get("/status/{project}", dependencies=[Depends(require_api_key)])
+async def status_backward(project: str, db=Depends(get_db)):
+    return await memory.get_status(project, db)
 
 
 dashboard_path = Path(settings.DASHBOARD_PATH)

@@ -31,5 +31,9 @@ class Settings(BaseSettings):
     # Hermes AI
     HERMES_TIMEOUT: int = 120
 
+    # Auth
+    API_KEY: str = ""  # vazio = auth desabilitado (dev)
+    RATE_LIMIT_PER_MIN: int = 10
+
 
 settings = Settings()

@@ -16,6 +16,7 @@ from summarizer import summarize as llm_summarize
 import embedder as vec_store
 
 MEMORY_API_URL = os.getenv("MEMORY_API_URL", "http://localhost:5050")
+MEMORY_API_KEY = os.getenv("MEMORY_API_KEY", "")
 SUMMARIZE_THRESHOLD = int(os.getenv("MEMORY_SUMMARIZE_THRESHOLD", "60"))
 MAX_INJECT = int(os.getenv("MEMORY_MAX_INJECT", "3"))
 DECAY_DAYS = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
@@ -138,8 +139,11 @@ def score_memory(m: dict, query: str = "", category_filter: str = "") -> float:
 
 
 async def call_api(method: str, path: str, **kwargs):
+    headers = kwargs.pop("headers", {})
+    if MEMORY_API_KEY:
+        headers["X-API-Key"] = MEMORY_API_KEY
     async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.request(method, f"{MEMORY_API_URL}{path}", **kwargs)
+        resp = await client.request(method, f"{MEMORY_API_URL}{path}", headers=headers, **kwargs)
         resp.raise_for_status()
         return resp.json()
 
@@ -293,8 +297,8 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                 }, ensure_ascii=False),
             }
             result = await call_api("POST", "/remember", json=payload)
-
-            memory_id = f"{result.get('id', '')}|{category}"
+            mem_id = result.get("id") or f"local_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+            memory_id = f"{mem_id}|{category}"
             vec_text = summary or content
             await asyncio.to_thread(vec_store.add, vec_text, memory_id)
 
@@ -474,7 +478,9 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                     }, ensure_ascii=False),
                 }
                 try:
-                    await call_api("POST", "/remember", json=payload)
+                    result = await call_api("POST", "/remember", json=payload)
+                    mem_id = result.get("id") or f"local_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+                    await asyncio.to_thread(vec_store.add, content, f"{mem_id}|{item['category']}")
                     saved += 1
                 except Exception as e:
                     print(f"[memory] consolidate save failed: {e}", file=sys.stderr)

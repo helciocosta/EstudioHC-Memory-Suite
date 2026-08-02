@@ -11,7 +11,7 @@ set -euo pipefail
 
 REPO_DIR="$HOME/Apps/EstudioHC-Memory-Suite"
 BACKUP_DIR="$REPO_DIR/backups"
-DB="$REPO_DIR/server/estudiohc_memory.db"
+DB="$REPO_DIR/data/estudiohc.db"
 FAISS="$REPO_DIR/apps/mcp-memory/src/.faiss_index.pkl"
 RETENTION_DAYS=7
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)

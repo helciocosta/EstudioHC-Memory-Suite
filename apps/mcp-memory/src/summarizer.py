@@ -1,9 +1,11 @@
 import json
+import os
 import re
 import urllib.request
 import urllib.error
 
-KOBOLD_API = "http://localhost:11434/v1/chat/completions"
+SUMMARIZER_API = os.getenv("SUMMARIZER_API", "http://localhost:11435/v1/chat/completions")
+SUMMARIZER_MODEL = os.getenv("SUMMARIZER_MODEL", "Qwen3-1.7B")
 MAX_OUTPUT_TOKENS = 60
 TIMEOUT = 30
 
@@ -21,7 +23,7 @@ def summarize(text: str, category: str = "context") -> str:
     )
 
     payload = {
-        "model": "koboldcpp",
+        "model": SUMMARIZER_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": text},
@@ -32,7 +34,7 @@ def summarize(text: str, category: str = "context") -> str:
     }
 
     req = urllib.request.Request(
-        KOBOLD_API,
+        SUMMARIZER_API,
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",

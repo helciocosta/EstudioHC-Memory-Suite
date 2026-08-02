@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,7 +23,7 @@ async def save_memory(entry: MemoryEntry, db: AsyncSession = Depends(get_db)):
     )
     db.add(mem)
     await db.commit()
-    return {"status": "success"}
+    return {"status": "success", "id": mem.id}
 
 
 @router.get("/recall/{project}")
@@ -47,6 +48,16 @@ async def get_memory(project: str, limit: int = 10, db: AsyncSession = Depends(g
     ]
 
 
+def _readable(content: str) -> str:
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict) and parsed.get("s"):
+            return parsed["s"]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return content
+
+
 @router.get("/status/{project}")
 async def get_status(project: str, db: AsyncSession = Depends(get_db)):
     result_pending = await db.execute(
@@ -63,6 +74,6 @@ async def get_status(project: str, db: AsyncSession = Depends(get_db)):
     )
     return {
         "project": project,
-        "pending": [r[0] for r in result_pending.fetchall()],
-        "completed": [r[0] for r in result_completed.fetchall()],
+        "pending": [_readable(r[0]) for r in result_pending.fetchall()],
+        "completed": [_readable(r[0]) for r in result_completed.fetchall()],
     }

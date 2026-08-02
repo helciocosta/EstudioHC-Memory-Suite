@@ -1,5 +1,7 @@
 import os
 import json
+import signal
+import shutil
 import subprocess
 
 from fastapi import APIRouter, Depends
@@ -12,6 +14,18 @@ router = APIRouter(prefix="/api", tags=["Chat IA"])
 
 OPENCODE_CLI = "/home/deploy/.opencode/bin/opencode"
 HERMES_CLI = settings.HERMES_CLI
+SANDBOX_IMAGE = "hermes-sandbox:latest"
+SANDBOX_TIMEOUT = 30
+
+_sandbox_ok: bool | None = None
+
+
+def _sandbox_disponivel() -> bool:
+    """True se o Docker está disponível no PATH. Checado uma vez por processo."""
+    global _sandbox_ok
+    if _sandbox_ok is None:
+        _sandbox_ok = bool(shutil.which("docker"))
+    return _sandbox_ok
 
 
 def _env_filtrado() -> dict:
@@ -23,58 +37,102 @@ def _env_filtrado() -> dict:
     return env
 
 
-async def _call_opencode(prompt: str) -> dict | None:
+def _kill_proc(proc) -> None:
+    """Mata o processo e todos os filhos (kill no group)."""
     try:
-        resultado = subprocess.run(
-            [OPENCODE_CLI, "run", "--format", "json", prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=_env_filtrado(),
-        )
-        saida = resultado.stdout.strip()
-        if not saida:
-            return None
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, AttributeError):
+        pass
 
-        texts = []
-        for line in saida.splitlines():
-            try:
-                event = json.loads(line)
-                if event.get("type") == "text":
-                    text = event.get("part", {}).get("text", "")
-                    if text:
-                        texts.append(text)
-                elif event.get("type") == "message":
-                    content = event.get("message", {}).get("content", "")
-                    if isinstance(content, list):
-                        for c in content:
-                            if c.get("type") == "text":
-                                texts.append(c.get("text", ""))
-                    elif content:
-                        texts.append(content)
-            except json.JSONDecodeError:
-                continue
 
-        if texts:
-            return {"resposta": "\n".join(texts).strip(), "agente": "opencode"}
+def _call_opencode_docker(prompt: str) -> str:
+    """Executa opencode num container Docker efêmero e restrito."""
+    cmd = [
+        "docker", "run", "--rm", "--name", "hermes-sandbox-run",
+        "--network", "none", "--read-only", "--tmpfs", "/tmp",
+        "--workdir", "/work", "--memory", "512m",
+        SANDBOX_IMAGE, prompt,
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=SANDBOX_TIMEOUT)
+        return out
+    except subprocess.TimeoutExpired:
+        _kill_proc(proc)
+        proc.wait()
+        return ""
+    except Exception:
+        return ""
+
+
+def _call_opencode_fallback(prompt: str) -> str | None:
+    """Fallback sem Docker: opencode local com whitelist de tools (sem shell/exec)."""
+    proc = None
+    try:
+        cmd = [OPENCODE_CLI, "run", "--tools", "read,write", "--format", "json", prompt]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, env=_env_filtrado(), start_new_session=True)
+        out, _ = proc.communicate(timeout=SANDBOX_TIMEOUT)
+        return out
+    except subprocess.TimeoutExpired:
+        if proc is not None:
+            _kill_proc(proc)
         return None
     except Exception:
         return None
 
 
+def _parse_opencode_output(raw: str) -> list:
+    """Converte a saída JSON-lines de opencode num lista de textos."""
+    if not raw:
+        return []
+    textos = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") == "text":
+            textos.append(obj.get("part", {}).get("text", ""))
+        elif obj.get("type") == "message":
+            content = obj.get("content")
+            if isinstance(content, str):
+                textos.append(content)
+            elif isinstance(content, list):
+                for c in content:
+                    if isinstance(c, dict) and c.get("type") == "text":
+                        textos.append(c.get("text", ""))
+    return [t for t in textos if t]
+
+
+async def _call_opencode(prompt: str) -> dict | None:
+    """Executa opencode (Docker isolado se disponível, senão fallback whitelist).
+    Retorna {"resposta", "agente"} ou None."""
+    if _sandbox_disponivel():
+        raw = _call_opencode_docker(prompt)
+    else:
+        raw = _call_opencode_fallback(prompt)
+    if not raw:
+        return None
+    textos = _parse_opencode_output(raw)
+    if textos:
+        return {"resposta": "\n".join(textos).strip(), "agente": "opencode"}
+    return None
+
+
 async def _call_hermes(prompt: str) -> dict:
     try:
-        resultado = subprocess.run(
-            [HERMES_CLI, "-z", prompt, "chat"],
-            capture_output=True,
-            text=True,
-            timeout=settings.HERMES_TIMEOUT,
-            env=_env_filtrado(),
-        )
-        saida = resultado.stdout.strip()
-        if resultado.returncode != 0:
-            return {"resposta": f"Erro Hermes CLI ({resultado.returncode})", "agente": "hermes-error"}
-        return {"resposta": saida, "agente": "hermes"}
+        proc = subprocess.run([HERMES_CLI, "-z", prompt, "chat"],
+                              capture_output=True, text=True,
+                              timeout=settings.HERMES_TIMEOUT,
+                              env=_env_filtrado())
+        if proc.returncode != 0:
+            return {"resposta": f"Erro Hermes CLI ({proc.returncode})", "agente": "hermes-error"}
+        return {"resposta": proc.stdout.strip(), "agente": "hermes"}
     except subprocess.TimeoutExpired:
         return {"resposta": "Falha ao chamar Hermes: timeout", "agente": "hermes-failed"}
     except Exception:

@@ -1,4 +1,11 @@
 services:
+  hermes-sandbox:
+    build:
+      context: ./apps/hermes-sandbox
+    image: hermes-sandbox:latest
+    network_mode: none
+    command: ["echo", "sandbox image built"]
+
   api:
     build:
       context: apps/api

@@ -15,6 +15,11 @@ REPO_DIR="$HOME/Apps/EstudioHC-Memory-Suite"
 MODELS_DIR="$REPO_DIR/models"
 MSTY_DIR="$HOME/.config/MstyStudio/llama-cpp"
 
+# Chave de estação: gerada na primeira execução, persistida entre execuções.
+# Requer ESTUDIOHC_API_KEY (master) no ambiente para auto-provisionamento.
+CHAVE_ESTACAO="${CHAVE_ESTACAO:-$(openssl rand -hex 32)}"
+MASTER_KEY="${ESTUDIOHC_API_KEY:-}"
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[setup]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[setup]${NC} $1"; }
@@ -117,7 +122,7 @@ if command -v opencode &>/dev/null; then
   "mcp": {
     "memory": {
       "type": "local",
-      "command": ["env", "MEMORY_API_URL=http://${SERVIDOR_CENTRAL}:5050", "python3", "${REPO_DIR}/apps/mcp-memory/src/memory_server.py"],
+      "command": ["env", "MEMORY_API_URL=http://${SERVIDOR_CENTRAL}:5050", "MEMORY_API_KEY=${CHAVE_ESTACAO}", "python3", "${REPO_DIR}/apps/mcp-memory/src/memory_server.py"],
       "enabled": true
     }
   },
@@ -152,7 +157,7 @@ User=$(whoami)
 Group=$(id -gn)
 ExecStart=${MSTY_DIR}/msty-llama-server \
     --model "${MODELS_DIR}/cybersec-assistant-3b-Q4_K_M.gguf" \
-    --port 11434 --host 0.0.0.0 \
+    --port 11434 --host 127.0.0.1 \
     --threads 4 --ctx-size 4096 \
     --flash-attn auto --cache-reuse 256 --keep -1 \
     --parallel 1 --cont-batching \
@@ -204,12 +209,22 @@ else
 fi
 
 # ── Registrar estação no servidor central (se online) ──────────
-info "Registrando estação no servidor central..."
+if [ -n "$MASTER_KEY" ]; then
+    PAYLOAD=$(python3 -c 'import json,sys; print(json.dumps({"hostname": sys.argv[1], "chave": sys.argv[2]}))' "$(hostname)" "$CHAVE_ESTACAO")
+    curl -s -X POST "http://${SERVIDOR_CENTRAL}:5050/api/estacoes/registrar" \
+        -H "Content-Type: application/json" \
+        -H "X-API-Key: ${MASTER_KEY}" \
+        -d "$PAYLOAD" \
+        >/dev/null 2>&1 && info "✅ Estação registrada (chave de estação gerada)" \
+        || warn "Não foi possível registrar a estação. API offline ou MASTER_KEY inválida?"
+fi
+
 curl -s -X POST "http://${SERVIDOR_CENTRAL}:5050/api/estacoes/ping" \
     -H "Content-Type: application/json" \
+    -H "X-API-Key: ${CHAVE_ESTACAO}" \
     -d "{\"hostname\":\"$(hostname)\",\"ip\":\"${TAILSCALE_IP}\"}" \
-    >/dev/null 2>&1 && info "✅ Estação registrada em ${SERVIDOR_CENTRAL}:5050" \
-    || warn "Não foi possível registrar estação. API offline?"
+    >/dev/null 2>&1 && info "✅ Ping de estação enviado" \
+    || warn "Não foi possível enviar ping. API offline?"
 
 # ── Final ───────────────────────────────────────────────────────
 echo ""

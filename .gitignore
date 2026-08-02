@@ -34,7 +34,11 @@ dist/
 *.egg-info/
 
 # FAISS index (binary state, regenerated on startup)
+*.pkl
 .faiss_index.pkl
+
+# MatrixX plugin data
+.matrixx/
 
 # Backups (gerados pelos scripts)
 backups/

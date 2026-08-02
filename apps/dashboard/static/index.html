@@ -46,7 +46,7 @@ main{flex:1;padding:24px;max-width:1200px;width:100%;margin:0 auto}
 .diario-item{padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:.2s;display:flex;align-items:center;justify-content:space-between}
 .diario-item:hover,.diario-item.active{border-color:var(--accent);background:#16183a}
 .diario-content{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;white-space:pre-wrap;font-size:13px;line-height:1.7;max-height:120px;overflow-y:auto;margin-top:12px;font-family:monospace}
-.ai-box{margin-top:12px;padding:14px;background:#0d1f1a;border:1px solid var(--accent2);border-radius:8px;font-size:13px;line-height:1.7;display:none}
+.ai-box{margin-top:12px;padding:14px;background:#0d1f1a;border:1px solid var(--accent2);border-radius:8px;font-size:13px;line-height:1.7;display:none;white-space:pre-wrap}
 .ai-box.visible{display:block}
 textarea{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;resize:vertical;min-height:80px}
 /* Projetos */
@@ -61,7 +61,7 @@ textarea{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(
 .btn-sm.ai{background:var(--accent);color:#fff}.btn-sm.ai:hover{background:#574fd6}
 /* Chat IA */
 .chat-box{height:360px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:10px}
-.msg{max-width:80%;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6}
+.msg{max-width:80%;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;white-space:pre-wrap}
 .msg.user{background:var(--accent);color:#fff;align-self:flex-end;border-bottom-right-radius:2px}
 .msg.ai{background:var(--card);border:1px solid var(--border);align-self:flex-start;border-bottom-left-radius:2px}
 .msg.loading{color:var(--muted);font-style:italic}
@@ -164,6 +164,19 @@ textarea{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(
 </main>
 <script>
 const API = window.location.origin + '/api';
+let ESTUDIOHC_KEY = '';
+async function carregarChave() {
+    try {
+        const r = await fetch(API + '/estacion-key');
+        if (r.ok) ESTUDIOHC_KEY = (await r.json()).chave || '';
+    } catch (e) { ESTUDIOHC_KEY = ''; }
+}
+function headersComChave(extra = {}) {
+    const h = { 'Content-Type': 'application/json', ...extra };
+    if (ESTUDIOHC_KEY) h['X-API-Key'] = ESTUDIOHC_KEY;
+    return h;
+}
+carregarChave();
 let diaAtual = new Date();
 let diaSelecionado = new Date();
 let agenda = [];
@@ -189,7 +202,7 @@ function initEstacao() {
   $('station-badge').textContent = `📍 ${estacao}`;
   
   // Registra a presença da estação no servidor central
-  fetch(`${API}/estacoes/ping?hostname=${encodeURIComponent(estacao)}&ip=${encodeURIComponent(window.location.hostname)}`, { method: 'POST' })
+  fetch(`${API}/estacoes/ping?hostname=${encodeURIComponent(estacao)}&ip=${encodeURIComponent(window.location.hostname)}`, { method: 'POST', headers: headersComChave() })
     .catch(err => console.log("Erro ao registrar ping da estação:", err));
 }
 
@@ -233,7 +246,7 @@ async function verificarStatus() {
 async function chamarIA(mensagem, contexto = "") {
   const r = await fetch(`${API}/hermes`, {
     method: 'POST',
-    headers: {'Content-Type':'application/json'},
+    headers: headersComChave(),
     body: JSON.stringify({mensagem, contexto})
   });
   if (r.ok) {
@@ -271,7 +284,7 @@ async function chamarIA(mensagem, contexto = "") {
 // ── Calendário ─────────────────────────────────────────────────
 async function carregarAgenda() {
   try {
-    const r = await fetch(`${API}/agenda`);
+    const r = await fetch(`${API}/agenda`, { headers: headersComChave() });
     agenda = await r.json();
   } catch(e) { agenda = []; }
   renderCalendario();
@@ -280,7 +293,7 @@ async function carregarAgenda() {
 async function salvarAgenda() {
   await fetch(`${API}/agenda`, {
     method: 'POST',
-    headers: {'Content-Type':'application/json'},
+    headers: headersComChave(),
     body: JSON.stringify({eventos: agenda})
   });
 }
@@ -309,7 +322,10 @@ function renderCalendario() {
     const dataStr = `${ano}-${String(mes+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     el.className = 'cal-day';
     if(d===hoje.getDate()&&mes===hoje.getMonth()&&ano===hoje.getFullYear()) el.classList.add('today');
-    el.innerHTML = `<div class="day-num">${d}</div>`;
+    const numEl = document.createElement('div');
+    numEl.className = 'day-num';
+    numEl.textContent = String(d);
+    el.appendChild(numEl);
     const evsDia = agenda.filter(e => e.data===dataStr);
     evsDia.slice(0,2).forEach(() => {
       const dot = document.createElement('div');
@@ -325,15 +341,32 @@ function renderEventosDia() {
   const dataStr = diaSelecionado.toISOString().split('T')[0];
   $('dia-selecionado-label').textContent = formatarData(diaSelecionado);
   const lista = $('eventos-lista');
-  const evsDia = agenda.filter(e => e.data===dataStr).sort((a,b) => a.hora.localeCompare(b.hora));
-  lista.innerHTML = evsDia.length === 0
-    ? '<p style="color:var(--muted);font-size:13px;padding:8px">Nenhum evento neste dia.</p>'
-    : evsDia.map((ev,i) => `
-      <div class="evento-item">
-        <span class="evento-hora">${ev.hora}</span>
-        <span>${ev.titulo}</span>
-        <button class="evento-del" onclick="removerEvento('${ev.id}')">✕</button>
-      </div>`).join('');
+  lista.innerHTML = '';
+  const evsDia = agenda.filter(e => e.data===dataStr).sort((a,b) => (a.hora||'').localeCompare(b.hora||''));
+  if (evsDia.length === 0) {
+    const p = document.createElement('p');
+    p.style.cssText = 'color:var(--muted);font-size:13px;padding:8px';
+    p.textContent = 'Nenhum evento neste dia.';
+    lista.appendChild(p);
+    return;
+  }
+  evsDia.forEach(ev => {
+    const div = document.createElement('div');
+    div.className = 'evento-item';
+    const hora = document.createElement('span');
+    hora.className = 'evento-hora';
+    hora.textContent = ev.hora || '';
+    const titulo = document.createElement('span');
+    titulo.textContent = ev.titulo || '';
+    const btn = document.createElement('button');
+    btn.className = 'evento-del';
+    btn.textContent = '✕';
+    btn.addEventListener('click', () => removerEvento(ev.id));
+    div.appendChild(hora);
+    div.appendChild(titulo);
+    div.appendChild(btn);
+    lista.appendChild(div);
+  });
 }
 
 function adicionarEvento() {
@@ -348,7 +381,7 @@ function adicionarEvento() {
 }
 
 async function removerEvento(id) {
-  await fetch(`${API}/agenda/${id}`, {method: 'DELETE'});
+  await fetch(`${API}/agenda/${id}`, {method: 'DELETE', headers: headersComChave()});
   agenda = agenda.filter(e => e.id !== id);
   renderEventosDia();
 }
@@ -358,17 +391,27 @@ function proximoMes() { diaAtual.setMonth(diaAtual.getMonth()+1); renderCalendar
 
 // ── Memória ────────────────────────────────────────────────────
 async function carregarDiarios() {
-  const r = await fetch(`${API}/diarios`);
+  const r = await fetch(`${API}/diarios`, { headers: headersComChave() });
   todosDiarios = await r.json();
   renderDiarios(todosDiarios);
 }
 
 function renderDiarios(lista) {
-  $('diario-list').innerHTML = lista.map(d => `
-    <div class="diario-item" onclick="abrirDiario('${d.data}',this)">
-      <span>${d.data}</span>
-      <span style="font-size:11px;color:var(--muted)">${(d.tamanho/1024).toFixed(1)}KB</span>
-    </div>`).join('');
+  const box = $('diario-list');
+  box.innerHTML = '';
+  lista.forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'diario-item';
+    const dataEl = document.createElement('span');
+    dataEl.textContent = d.data || '';
+    const sizeEl = document.createElement('span');
+    sizeEl.style.cssText = 'font-size:11px;color:var(--muted)';
+    sizeEl.textContent = `${((d.tamanho||0)/1024).toFixed(1)}KB`;
+    el.appendChild(dataEl);
+    el.appendChild(sizeEl);
+    el.addEventListener('click', () => abrirDiario(d.data, el));
+    box.appendChild(el);
+  });
 }
 
 function filtrarDiarios() {
@@ -379,7 +422,7 @@ function filtrarDiarios() {
 async function abrirDiario(data, el) {
   document.querySelectorAll('.diario-item').forEach(e => e.classList.remove('active'));
   el.classList.add('active');
-  const r = await fetch(`${API}/diario/${data}`);
+  const r = await fetch(`${API}/diario/${data}`, { headers: headersComChave() });
   const d = await r.json();
   $('diario-titulo').textContent = `📄 ${data}`;
   $('diario-content').textContent = d.conteudo;
@@ -388,11 +431,15 @@ async function abrirDiario(data, el) {
   
   // Se já tiver resumo no cache do banco, exibe de forma instantânea
   if (d.resumo) {
-    const agentBadge = d.agente === 'koboldcpp'
-      ? '<small style="color:var(--yellow)">⚡ [GPU Local] (Cache)</small><br>'
-      : `<small style="color:var(--accent2)">☁️ [${d.agente}] (Cache)</small><br>`;
-    $('ai-resumo').innerHTML = agentBadge + d.resumo.replace(/\n/g, '<br>');
-    $('ai-resumo').classList.add('visible');
+    const el = $('ai-resumo');
+    el.textContent = '';
+    const badge = document.createElement('small');
+    badge.style.color = d.agente === 'koboldcpp' ? 'var(--yellow)' : 'var(--accent2)';
+    badge.textContent = d.agente === 'koboldcpp' ? '⚡ [GPU Local] (Cache)' : `☁️ [${d.agente}] (Cache)`;
+    el.appendChild(badge);
+    el.appendChild(document.createElement('br'));
+    el.appendChild(document.createTextNode(d.resumo));
+    el.classList.add('visible');
   } else {
     // Caso contrário, executa e salva automaticamente
     resumirDiario(data);
@@ -406,16 +453,19 @@ async function resumirDiario(dataParam) {
   const trecho = diarioAtualConteudo.slice(0, 1500);
   const d = await chamarIA(`Faça um resumo conciso e organizado deste diário de trabalho:\n\n${trecho}`);
   if (d.resposta) {
-    const agentLabel = d.agente === 'opencode' ? 'primary' : d.agente === 'hermes' ? 'secondary' : d.agente === 'koboldcpp' ? 'gpu-local' : d.agente;
-    const agentBadge = d.agente === 'koboldcpp'
-      ? '<small style="color:var(--yellow)">⚡ [GPU Local] </small><br>'
-      : `<small style="color:var(--accent2)">☁️ [${agentLabel}] </small><br>`;
-    $('ai-resumo').innerHTML = agentBadge + d.resposta.replace(/\n/g, '<br>');
+    const el = $('ai-resumo');
+    el.textContent = '';
+    const badge = document.createElement('small');
+    badge.style.color = d.agente === 'koboldcpp' ? 'var(--yellow)' : 'var(--accent2)';
+    badge.textContent = d.agente === 'koboldcpp' ? '⚡ [GPU Local] ' : `☁️ [${d.agente}] `;
+    el.appendChild(badge);
+    el.appendChild(document.createElement('br'));
+    el.appendChild(document.createTextNode(d.resposta));
     
     try {
       await fetch(`${API}/diario/${data}/resumo`, {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
+        headers: headersComChave(),
         body: JSON.stringify({resumo: d.resposta, agente: d.agente})
       });
     } catch(err) {
@@ -431,7 +481,7 @@ async function adicionarNota() {
   if(!texto) return;
   await fetch(`${API}/nota`, {
     method: 'POST',
-    headers: {'Content-Type':'application/json'},
+    headers: headersComChave(),
     body: JSON.stringify({texto, estacao})
   });
   $('nota-texto').value = '';
@@ -441,31 +491,52 @@ async function adicionarNota() {
 
 // ── Projetos ───────────────────────────────────────────────────
 async function carregarProjetos() {
-  const r = await fetch(`${API}/projetos`);
+  const r = await fetch(`${API}/projetos`, { headers: headersComChave() });
   todosProjetos = await r.json();
   renderProjetos(todosProjetos);
 }
 
 function renderProjetos(lista) {
-  $('proj-grid').innerHTML = lista.map(p => {
-    let badge = "";
+  const grid = $('proj-grid');
+  grid.innerHTML = '';
+  lista.forEach(p => {
     const est = p.estacao || "desconhecida";
-    if (p.local.includes('/home/deploy') || est === 'vmi2968998' || est === 'central') {
-      badge = `<span style="color:var(--accent2); font-weight:bold; font-size:0.85em; margin-right:6px;">[☁️ Servidor: ${est}]</span>`;
-    } else {
-      badge = `<span style="color:var(--yellow); font-weight:bold; font-size:0.85em; margin-right:6px;">[💻 Estação: ${est}]</span>`;
-    }
-    return `
-      <div class="proj-card">
-        <div class="proj-nome">${badge}${p.nome}</div>
-        <div class="proj-local">${p.local}</div>
-        <div class="proj-preview">${p.preview}</div>
-        <div class="proj-actions">
-          <button class="btn-sm ai" onclick="perguntarIA('${p.nome.replace(/'/g,"\\\\'")}')">🤖 Perguntar IA</button>
-          <button class="btn-sm" onclick="verRelatorio('${p.nome.replace(/'/g,"\\\\'")}')" style="background:#2a2d3e; color:var(--text); margin-left:4px;">📋 Relatório</button>
-        </div>
-      </div>`;
-  }).join('');
+    const isServer = (p.local || '').includes('/home/deploy') || est === 'vmi2968998' || est === 'central';
+    const card = document.createElement('div');
+    card.className = 'proj-card';
+    const nome = document.createElement('div');
+    nome.className = 'proj-nome';
+    const badge = document.createElement('span');
+    badge.style.cssText = 'font-weight:bold;font-size:0.85em;margin-right:6px;';
+    badge.style.color = isServer ? 'var(--accent2)' : 'var(--yellow)';
+    badge.textContent = isServer ? `[☁️ Servidor: ${est}]` : `[💻 Estação: ${est}]`;
+    nome.appendChild(badge);
+    nome.appendChild(document.createTextNode(p.nome || ''));
+    const local = document.createElement('div');
+    local.className = 'proj-local';
+    local.textContent = p.local || '';
+    const preview = document.createElement('div');
+    preview.className = 'proj-preview';
+    preview.textContent = p.preview || '';
+    const actions = document.createElement('div');
+    actions.className = 'proj-actions';
+    const btnIA = document.createElement('button');
+    btnIA.className = 'btn-sm ai';
+    btnIA.textContent = '🤖 Perguntar IA';
+    btnIA.addEventListener('click', () => perguntarIA(p.nome));
+    const btnRel = document.createElement('button');
+    btnRel.className = 'btn-sm';
+    btnRel.style.cssText = 'background:#2a2d3e;color:var(--text);margin-left:4px;';
+    btnRel.textContent = '📋 Relatório';
+    btnRel.addEventListener('click', () => verRelatorio(p.nome));
+    actions.appendChild(btnIA);
+    actions.appendChild(btnRel);
+    card.appendChild(nome);
+    card.appendChild(local);
+    card.appendChild(preview);
+    card.appendChild(actions);
+    grid.appendChild(card);
+  });
 }
 
 function verRelatorio(nome) {
@@ -507,11 +578,13 @@ async function enviarChat() {
   const d = await chamarIA(texto);
   loading.className = 'msg ai';
   if (d.resposta) {
-    const agentLabel = d.agente === 'opencode' ? 'primary' : d.agente === 'hermes' ? 'secondary' : d.agente === 'koboldcpp' ? 'gpu-local' : d.agente;
-    const agentBadge = d.agente === 'koboldcpp'
-      ? '<small style="color:var(--yellow)">⚡ [GPU Local]</small><br>'
-      : `<small style="color:var(--accent2)">☁️ [${agentLabel}]</small><br>`;
-    loading.innerHTML = agentBadge + d.resposta.replace(/\n/g, '<br>');
+    loading.textContent = '';
+    const badge = document.createElement('small');
+    badge.style.color = d.agente === 'koboldcpp' ? 'var(--yellow)' : 'var(--accent2)';
+    badge.textContent = d.agente === 'koboldcpp' ? '⚡ [GPU Local]' : `☁️ [${d.agente}]`;
+    loading.appendChild(badge);
+    loading.appendChild(document.createElement('br'));
+    loading.appendChild(document.createTextNode(d.resposta));
   } else {
     loading.textContent = '❌ ' + d.erro;
   }

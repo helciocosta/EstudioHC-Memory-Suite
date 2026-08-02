@@ -451,6 +451,20 @@ body{
 const urlParams = new URLSearchParams(window.location.search);
 const projNome = urlParams.get('nome');
 
+let ESTUDIOHC_KEY = '';
+async function carregarChave() {
+    try {
+        const r = await fetch('/api/estacion-key');
+        if (r.ok) ESTUDIOHC_KEY = (await r.json()).chave || '';
+    } catch (e) { ESTUDIOHC_KEY = ''; }
+}
+function headersComChave(extra = {}) {
+    const h = { 'Content-Type': 'application/json', ...extra };
+    if (ESTUDIOHC_KEY) h['X-API-Key'] = ESTUDIOHC_KEY;
+    return h;
+}
+carregarChave();
+
 if (!projNome) {
   alert('Projeto não especificado.');
   window.location.href = 'index.html';
@@ -465,16 +479,16 @@ async function solicitarRelatorio(forcar = false) {
   overlay.classList.add('visible');
   
   try {
-    const response = await fetch(`/api/projetos/relatorio?nome=${encodeURIComponent(projNome)}`);
+    const response = await fetch(`/api/projetos/relatorio?nome=${encodeURIComponent(projNome)}`, { headers: headersComChave() });
     const data = await response.json();
     
     if (data && data.relatorio) {
-      // Renderiza Markdown usando Marked.js
-      document.getElementById('report-rendered').innerHTML = marked.parse(data.relatorio);
+      // Sem DOMPurify local, renderiza como texto simples (elimina XSS)
+      document.getElementById('report-rendered').textContent = data.relatorio;
       
       // Atualiza o Preview Quote Box
       if (data.preview) {
-        document.getElementById('proj-preview-box').innerHTML = `"${data.preview}"`;
+        document.getElementById('proj-preview-box').textContent = `"${data.preview}"`;
       } else {
         document.getElementById('proj-preview-box').style.display = 'none';
       }
@@ -482,21 +496,11 @@ async function solicitarRelatorio(forcar = false) {
       // Configura metadados vindos do endpoint se existirem
       atualizarMetadadosInterface();
     } else {
-      document.getElementById('report-rendered').innerHTML = `
-        <div style="padding:20px; border:1px solid var(--red); border-radius:12px; background:rgba(255,95,95,0.05); color:var(--red);">
-          <h3>⚠️ Falha ao Processar Relatório</h3>
-          <p>${data.erro || 'A IA não retornou um formato de relatório válido.'}</p>
-        </div>
-      `;
+      document.getElementById('report-rendered').textContent = '⚠️ Falha ao Processar Relatório — ' + (data.erro || 'A IA não retornou um formato de relatório válido.');
     }
   } catch (error) {
     console.error('Erro de API:', error);
-    document.getElementById('report-rendered').innerHTML = `
-      <div style="padding:20px; border:1px solid var(--red); border-radius:12px; background:rgba(255,95,95,0.05); color:var(--red);">
-        <h3>⚠️ Erro de Rede</h3>
-        <p>Não foi possível conectar-se ao servidor local EstudioHC. Verifique se o daemon está em execução na porta 8585.</p>
-      </div>
-    `;
+    document.getElementById('report-rendered').textContent = '⚠️ Erro de Rede — Não foi possível conectar-se ao servidor local EstudioHC. Verifique se o daemon está em execução na porta 8585.';
   } finally {
     overlay.classList.remove('visible');
   }
@@ -505,7 +509,7 @@ async function solicitarRelatorio(forcar = false) {
 // Resgata dados básicos do projeto a partir da listagem geral para compor a interface
 async function atualizarMetadadosInterface() {
   try {
-    const response = await fetch('/api/projetos');
+    const response = await fetch('/api/projetos', { headers: headersComChave() });
     const projetos = await response.json();
     const proj = projetos.find(p => p.nome === projNome);
     

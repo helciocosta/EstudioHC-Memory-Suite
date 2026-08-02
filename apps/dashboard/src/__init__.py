@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
 API_URL = os.getenv("API_URL", "http://estudiohc-api:5050")
+DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
 
 app = FastAPI(title="EstudioHC Hub", version="3.0.0")
 
@@ -26,17 +27,27 @@ app.add_middleware(
 )
 
 
+@app.get("/api/estacion-key")
+async def estacion_key():
+    # Serve a chave da estação local para o JS (mesma origem, uso local).
+    return {"chave": DASHBOARD_API_KEY}
+
+
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def proxy_api(path: str, request: Request):
     target_url = f"{API_URL}/api/{path}"
     body = await request.body()
+
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
+    if DASHBOARD_API_KEY:
+        headers["X-API-Key"] = DASHBOARD_API_KEY
 
     async with httpx.AsyncClient() as client:
         resp = await client.request(
             method=request.method,
             url=target_url,
             content=body,
-            headers={k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")},
+            headers=headers,
             params=request.query_params,
             timeout=240,
         )

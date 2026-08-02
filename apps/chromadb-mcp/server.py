@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import uuid
 from typing import Any
 
 import chromadb
@@ -13,8 +14,15 @@ from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, ListToolsResult, ServerCapabilities, TextContent, Tool
 
 DATA_DIR = os.environ.get("CHROMA_DATA_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_data"))
-HOST = os.environ.get("CHROMA_HOST", "0.0.0.0")
+HOST = os.environ.get("CHROMA_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CHROMA_PORT", "8765"))
+CHROMA_API_KEY = os.environ.get("CHROMA_API_KEY", "")
+
+
+def _check_auth(arguments: dict) -> None:
+    token = arguments.get("api_key") or ""
+    if CHROMA_API_KEY and token != CHROMA_API_KEY:
+        raise ValueError("Unauthorized")
 
 _mcp_ver = _pkg_version("mcp")
 MCP_MAJOR = int(_mcp_ver.split(".")[0])
@@ -100,9 +108,25 @@ async def list_tools() -> ListToolsResult:
     ])
 
 
+ALLOWED_META = {"title", "tags", "project", "ts"}
+
+
+def _sanitizar_where(raw):
+    if not isinstance(raw, dict):
+        return None
+    out = {}
+    for k, v in raw.items():
+        if k in ALLOWED_META:
+            out[k] = v
+        elif k in ("$and", "$or") and isinstance(v, list):
+            out[k] = [_sanitizar_where(item) for item in v]
+    return out or None
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
     try:
+        _check_auth(arguments)
         if name == "list_collections":
             cols = client.list_collections()
             meta = _load_meta()
@@ -131,7 +155,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
         elif name == "add_documents":
             col = client.get_collection(name=arguments["collection"])
             docs = arguments["documents"]
-            ids = [d.get("id", f"doc_{i}_{hash(d['text'][:50])}") for i, d in enumerate(docs)]
+            ids = [d.get("id") or str(uuid.uuid5(uuid.NAMESPACE_URL, f"{arguments['collection']}:{d['text'][:200]}")) for d in docs]
             texts = [d["text"] for d in docs]
             metas = [d.get("metadata", {}) for d in docs]
             col.add(documents=texts, ids=ids, metadatas=metas)
@@ -142,7 +166,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
             col = client.get_collection(name=arguments["collection"])
             r = col.query(query_texts=[arguments["query"]],
                           n_results=min(arguments.get("n_results", 5), 50),
-                          where=arguments.get("filter_metadata"))
+                          where=_sanitizar_where(arguments.get("filter_metadata")))
             out = [{"id": r["ids"][0][i], "text": r["documents"][0][i][:500],
                     "metadata": r["metadatas"][0][i] if r["metadatas"] else {},
                     "score": float(r["distances"][0][i]) if r["distances"] else None}

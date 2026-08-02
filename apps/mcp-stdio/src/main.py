@@ -96,7 +96,11 @@ async def handle_call_tool(name: str, arguments: dict | None):
 
     elif name == "recall_memory":
         project = arguments.get("project", "EstudioHC")
-        limit = arguments.get("limit", 10)
+        try:
+            limit = int(arguments.get("limit", 10))
+        except (TypeError, ValueError):
+            limit = 10
+        limit = max(1, min(limit, 50))
         with engine.connect() as conn:
             rows = conn.execute(
                 text(

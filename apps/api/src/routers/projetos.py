@@ -12,18 +12,24 @@ from ..database import get_db
 from ..models.projetos import Projeto
 from ..schemas import ProjetoEntry, ProjetosSyncPayload, ProjetoRelatorioPayload
 from ..config import settings
+from ..security import Identity, get_current_estacao, require_master
 
 router = APIRouter(prefix="/api/projetos", tags=["Projetos"])
 
 
 @router.get("")
-async def get_projetos(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Projeto).order_by(Projeto.nome.asc())
-    )
+async def get_projetos(
+    identity: Identity = Depends(get_current_estacao),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(Projeto).order_by(Projeto.nome.asc())
+    if identity.scope == "estacao":
+        query = query.where(Projeto.estacao == identity.estacao)
+    result = await db.execute(query)
     rows = result.scalars().all()
     return [
         {
+            "id": r.id,
             "nome": r.nome,
             "local": r.local_caminho,
             "preview": r.readme_preview,
@@ -36,13 +42,18 @@ async def get_projetos(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/sync")
-async def sync_projetos(payload: ProjetosSyncPayload, db: AsyncSession = Depends(get_db)):
+async def sync_projetos(
+    payload: ProjetosSyncPayload,
+    identity: Identity = Depends(get_current_estacao),
+    db: AsyncSession = Depends(get_db),
+):
     count = 0
     for p in payload.projetos:
+        estacao = identity.estacao if identity.scope == "estacao" else p.estacao
         existing = await db.execute(
             select(Projeto).where(
                 Projeto.nome == p.nome,
-                Projeto.estacao == p.estacao,
+                Projeto.estacao == estacao,
             )
         )
         row = existing.scalar_one_or_none()
@@ -60,7 +71,7 @@ async def sync_projetos(payload: ProjetosSyncPayload, db: AsyncSession = Depends
                     status=p.status,
                     tags=p.tags,
                     readme_preview=p.readme_preview,
-                    estacao=p.estacao,
+                    estacao=estacao,
                     ultima_atualizacao=datetime.now().isoformat(),
                 )
             )
@@ -69,14 +80,16 @@ async def sync_projetos(payload: ProjetosSyncPayload, db: AsyncSession = Depends
     return {"ok": True, "count": count}
 
 
-@router.get("/relatorio")
+@router.get("/relatorio", status_code=405)
 async def gerar_relatorio_get(nome: str):
-    payload = ProjetoRelatorioPayload(nome=nome)
-    return await gerar_relatorio(payload)
+    return {"detail": "Use POST /api/projetos/gerar-relatorio"}
 
 
 @router.post("/gerar-relatorio")
-async def gerar_relatorio(payload: ProjetoRelatorioPayload):
+async def gerar_relatorio(
+    payload: ProjetoRelatorioPayload,
+    identity: Identity = Depends(require_master),
+):
     nome = payload.nome
     estacao = payload.estacao
     readme = payload.readme or ""

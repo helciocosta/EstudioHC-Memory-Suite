@@ -7,6 +7,7 @@ in ChromaDB collections named docs_<project>.
 import asyncio
 import json
 import os
+import random
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -16,6 +17,7 @@ from mcp.client.sse import sse_client
 
 CHROMA_MCP_URL = os.getenv("CHROMA_MCP_URL", "http://localhost:8765/mcp")
 SSE_TIMEOUT = float(os.getenv("CHROMA_SSE_TIMEOUT", "10"))
+CHROMA_API_KEY = os.getenv("CHROMA_API_KEY", "")
 
 _session: ClientSession | None = None
 _streams: Any | None = None
@@ -57,20 +59,26 @@ async def close() -> None:
 
 
 async def _call_tool(name: str, arguments: dict) -> dict:
-    session = await _get_session()
-    try:
-        result = await session.call_tool(name, arguments)
-    except Exception:
-        await close()
-        session = await _get_session()
-        result = await session.call_tool(name, arguments)
-    text = "".join(c.text for c in result.content if getattr(c, "type", "") == "text")
-    if getattr(result, "isError", False):
-        raise ValueError(text)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return {"text": text}
+    if CHROMA_API_KEY:
+        arguments = {**arguments, "api_key": CHROMA_API_KEY}
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            session = await _get_session()
+            result = await asyncio.wait_for(session.call_tool(name, arguments), timeout=30)
+            text = "".join(c.text for c in result.content if getattr(c, "type", "") == "text")
+            if getattr(result, "isError", False):
+                raise ValueError(text)
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return {"text": text}
+        except Exception as e:
+            last_err = e
+            await close()
+            if attempt < 2:
+                await asyncio.sleep(0.5 * (2 ** attempt) + random.uniform(0, 0.3))
+    raise last_err if last_err else ValueError(f"tool call failed: {name}")
 
 
 def _not_found(project: str) -> ValueError:

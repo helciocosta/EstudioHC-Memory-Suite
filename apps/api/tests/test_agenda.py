@@ -55,3 +55,52 @@ async def test_delete_remove_unico_evento(client: AsyncClient):
 async def test_delete_404_quando_id_nao_existe(client: AsyncClient):
     resp = await client.delete("/api/agenda/nao-existe", headers=HEADERS)
     assert resp.status_code == 404
+
+
+async def _registrar(client, hostname, chave):
+    await client.post("/api/estacoes/registrar", json={"hostname": hostname, "chave": chave}, headers=HEADERS)
+
+
+async def test_estacao_so_ve_sua_propria_agenda(client: AsyncClient):
+    await _registrar(client, "estacao-x", "chave-x")
+    await _registrar(client, "estacao-y", "chave-y")
+    # estacao-x grava evento
+    r = await client.post(
+        "/api/agenda",
+        json={"eventos": [{"id": "e1", "data": "2026-08-02", "hora": "09:00", "titulo": "de x", "estacao": "central"}]},
+        headers={"X-API-Key": "chave-x"},
+    )
+    assert r.status_code == 200
+    # estacao-y não vê o evento de x
+    r2 = await client.get("/api/agenda", headers={"X-API-Key": "chave-y"})
+    assert r2.status_code == 200
+    assert all(e["estacao"] == "estacao-y" for e in r2.json())
+    # estacao-x vê o próprio (estacao gravada = identidade, não payload)
+    r3 = await client.get("/api/agenda", headers={"X-API-Key": "chave-x"})
+    assert len(r3.json()) == 1
+    assert r3.json()[0]["estacao"] == "estacao-x"
+    assert r3.json()[0]["titulo"] == "de x"
+
+
+async def test_estacao_nao_sobrescreve_evento_de_outra(client: AsyncClient):
+    await _registrar(client, "estacao-x", "chave-x")
+    await _registrar(client, "estacao-y", "chave-y")
+    # x cria e1
+    await client.post("/api/agenda", json={"eventos": [{"id": "e1", "data": "2026-08-02", "hora": "09:00", "titulo": "original"}]}, headers={"X-API-Key": "chave-x"})
+    # y tenta sobrescrever e1 (que pertence a x) -> 403
+    r = await client.post("/api/agenda", json={"eventos": [{"id": "e1", "data": "2026-08-02", "hora": "10:00", "titulo": "hack"}]}, headers={"X-API-Key": "chave-y"})
+    assert r.status_code == 403
+    r2 = await client.get("/api/agenda", headers={"X-API-Key": "chave-x"})
+    itens = r2.json()
+    assert len(itens) == 1
+    assert itens[0]["titulo"] == "original"  # não foi sobrescrito
+
+
+async def test_estacao_nao_delete_evento_de_outra(client: AsyncClient):
+    await _registrar(client, "estacao-x", "chave-x")
+    await _registrar(client, "estacao-y", "chave-y")
+    await client.post("/api/agenda", json={"eventos": [{"id": "e1", "data": "2026-08-02", "hora": "09:00", "titulo": "original"}]}, headers={"X-API-Key": "chave-x"})
+    r = await client.delete("/api/agenda/e1", headers={"X-API-Key": "chave-y"})
+    assert r.status_code == 404
+    r2 = await client.get("/api/agenda", headers={"X-API-Key": "chave-x"})
+    assert len(r2.json()) == 1

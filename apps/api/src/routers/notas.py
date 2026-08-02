@@ -8,13 +8,17 @@ from ..database import get_db
 from ..models.notas import Nota
 from ..models.resumos_diarios import ResumoDiario
 from ..schemas import NotaEntry, ResumoPayload
+from ..security import Identity, get_current_estacao
 
 router = APIRouter(prefix="/api", tags=["Notas / Diários"])
 
 
 @router.get("/diarios")
-async def get_diarios(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
+async def get_diarios(
+    identity: Identity = Depends(get_current_estacao),
+    db: AsyncSession = Depends(get_db),
+):
+    query = (
         select(
             func.substr(Nota.timestamp, 1, 10).label("data_dia"),
             func.sum(func.length(Nota.texto)).label("tamanho"),
@@ -22,6 +26,9 @@ async def get_diarios(db: AsyncSession = Depends(get_db)):
         .group_by(func.substr(Nota.timestamp, 1, 10))
         .order_by(func.substr(Nota.timestamp, 1, 10).desc())
     )
+    if identity.scope == "estacao":
+        query = query.where(Nota.estacao == identity.estacao)
+    result = await db.execute(query)
     diarios = [{"data": r[0], "tamanho": r[1] or 0} for r in result.fetchall()]
 
     hoje = datetime.now().strftime("%Y-%m-%d")
@@ -31,12 +38,16 @@ async def get_diarios(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/diario/{data}")
-async def get_diario(data: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Nota)
-        .where(func.substr(Nota.timestamp, 1, 10) == data)
-        .order_by(Nota.timestamp.asc())
-    )
+async def get_diario(
+    data: str,
+    identity: Identity = Depends(get_current_estacao),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(Nota).where(func.substr(Nota.timestamp, 1, 10) == data)
+    if identity.scope == "estacao":
+        query = query.where(Nota.estacao == identity.estacao)
+    query = query.order_by(Nota.timestamp.asc())
+    result = await db.execute(query)
     rows = result.scalars().all()
 
     result_res = await db.execute(
@@ -82,9 +93,13 @@ async def save_diario_resumo(data: str, payload: ResumoPayload, db: AsyncSession
 
 
 @router.post("/nota")
-async def save_nota(payload: NotaEntry, db: AsyncSession = Depends(get_db)):
+async def save_nota(
+    payload: NotaEntry,
+    identity: Identity = Depends(get_current_estacao),
+    db: AsyncSession = Depends(get_db),
+):
     nota = Nota(
-        estacao=payload.estacao,
+        estacao=identity.estacao,
         texto=payload.texto,
         timestamp=datetime.now().isoformat(),
     )

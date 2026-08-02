@@ -24,6 +24,14 @@ MAX_INJECT = int(os.getenv("MEMORY_MAX_INJECT", "3"))
 DECAY_DAYS = int(os.getenv("MEMORY_DECAY_DAYS", "30"))
 HYBRID_RRF_K = int(os.getenv("HYBRID_RRF_K", "60"))
 
+PROJECT_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
+
+
+def _validar_project(project: str) -> str:
+    if not project or not PROJECT_RE.fullmatch(project):
+        raise ValueError(f"project inválido: {project!r}")
+    return project
+
 # Token budget enforcement
 MEMORY_MAX_TOKENS = int(os.getenv("MEMORY_MAX_TOKENS", "2048"))
 MEMORY_INJECT_TOKENS = int(os.getenv("MEMORY_INJECT_TOKENS", "1024"))
@@ -359,10 +367,14 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text=f"Memory saved in [{project}]{suffix}")]
 
         elif name == "search_memory":
-            project = arguments.get("project", "opencode")
+            project = _validar_project(arguments.get("project", "opencode"))
             query = arguments.get("query", "")
             category_filter = arguments.get("category", "")
-            limit = min(arguments.get("limit", MAX_INJECT), 15)
+            try:
+                limit = int(arguments.get("limit", MAX_INJECT))
+            except (TypeError, ValueError):
+                limit = MAX_INJECT
+            limit = max(1, min(limit, 50))
             include_raw = arguments.get("include_raw", False)
             max_days = arguments.get("days", 0)
 
@@ -458,7 +470,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text="\n".join(lines))]
 
         elif name == "get_status":
-            project = arguments.get("project", "opencode")
+            project = _validar_project(arguments.get("project", "opencode"))
             result = await call_api("GET", f"/status/{project}")
             parts = [f"--- Status for [{project}] ---"]
             if result.get("pending"):
@@ -507,7 +519,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text=f"Cleared {count} items from working memory{suffix}.")]
 
         elif name == "consolidate":
-            project = arguments.get("project", "opencode")
+            project = _validar_project(arguments.get("project", "opencode"))
             category = arguments.get("category", "")
             skip_summarize = arguments.get("skip_summarize", False)
 
@@ -541,15 +553,19 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text=f"Consolidated {saved}/{len(to_persist)} items to [{project}].")]
 
         elif name == "doc_add":
-            project = arguments.get("project", "opencode")
+            project = _validar_project(arguments.get("project", "opencode"))
             title = arguments["title"]
             content = arguments["content"]
             tags = arguments.get("tags", [])
+            if len(content) > 1024 * 1024:
+                raise ValueError("content muito grande (máx 1MB)")
+            if len(tags) > 50:
+                raise ValueError("tags demais (máx 50)")
             info = await chroma.doc_add(project, title, content, tags)
             return [TextContent(type="text", text=json.dumps(info, ensure_ascii=False))]
 
         elif name == "doc_search":
-            project = arguments.get("project", "opencode")
+            project = _validar_project(arguments.get("project", "opencode"))
             query = arguments["query"]
             limit = min(arguments.get("limit", 5), 20)
             docs = await chroma.doc_search(project, query, limit)
@@ -566,7 +582,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text="\n".join(lines))]
 
         elif name == "doc_list":
-            project = arguments.get("project", "opencode")
+            project = _validar_project(arguments.get("project", "opencode"))
             limit = min(arguments.get("limit", 20), 100)
             data = await chroma.doc_list(project, limit)
             docs = data.get("documents", [])
@@ -580,8 +596,11 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text="\n".join(lines))]
 
         elif name == "doc_delete":
-            project = arguments.get("project", "opencode")
+            project = _validar_project(arguments.get("project", "opencode"))
             doc_id = arguments["id"]
+            meta = arguments.get("metadata", {}) or {}
+            if meta.get("owner") and meta["owner"] != AGENT_NAME:
+                raise ValueError("Sem permissão para apagar este documento")
             info = await chroma.doc_delete(project, doc_id)
             return [TextContent(type="text", text=json.dumps(info, ensure_ascii=False))]
 

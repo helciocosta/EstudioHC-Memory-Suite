@@ -2,15 +2,25 @@ import os
 import json
 import subprocess
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from ..config import settings
 from ..schemas import ChatPayload
+from ..security import Identity, require_master
 
 router = APIRouter(prefix="/api", tags=["Chat IA"])
 
 OPENCODE_CLI = "/home/deploy/.opencode/bin/opencode"
 HERMES_CLI = settings.HERMES_CLI
+
+
+def _env_filtrado() -> dict:
+    """Somente as variáveis mínimas necessárias — não vaza todo o os.environ."""
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "")}
+    if os.environ.get("OPENROUTER_API_KEY"):
+        env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
 
 
 async def _call_opencode(prompt: str) -> dict | None:
@@ -20,7 +30,7 @@ async def _call_opencode(prompt: str) -> dict | None:
             capture_output=True,
             text=True,
             timeout=120,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env=_env_filtrado(),
         )
         saida = resultado.stdout.strip()
         if not saida:
@@ -59,19 +69,23 @@ async def _call_hermes(prompt: str) -> dict:
             capture_output=True,
             text=True,
             timeout=settings.HERMES_TIMEOUT,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env=_env_filtrado(),
         )
         saida = resultado.stdout.strip()
-        erro = resultado.stderr.strip() if resultado.stderr else ""
         if resultado.returncode != 0:
-            return {"resposta": f"Erro Hermes CLI ({resultado.returncode}): {erro}", "agente": "hermes-error"}
+            return {"resposta": f"Erro Hermes CLI ({resultado.returncode})", "agente": "hermes-error"}
         return {"resposta": saida, "agente": "hermes"}
-    except Exception as e:
-        return {"resposta": f"Falha ao chamar Hermes: {e}", "agente": "hermes-failed"}
+    except subprocess.TimeoutExpired:
+        return {"resposta": "Falha ao chamar Hermes: timeout", "agente": "hermes-failed"}
+    except Exception:
+        return {"resposta": "Falha ao chamar Hermes", "agente": "hermes-failed"}
 
 
 @router.post("/hermes")
-async def chat_ia(payload: ChatPayload):
+async def chat_ia(
+    payload: ChatPayload,
+    identity: Identity = Depends(require_master),
+):
     prompt = payload.mensagem
     if payload.contexto:
         prompt = f"[Contexto EstudioHC: {payload.contexto}]\n\n{payload.mensagem}"

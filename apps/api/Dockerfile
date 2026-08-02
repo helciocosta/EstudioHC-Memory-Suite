@@ -15,4 +15,7 @@ COPY alembic.ini .
 
 EXPOSE 5050
 
+RUN useradd --create-home --uid 1000 appuser
+USER appuser
+
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "5050"]

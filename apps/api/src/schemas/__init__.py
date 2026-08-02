@@ -73,6 +73,11 @@ class EstacaoPing(BaseModel):
     ip: str = "desconhecido"
 
 
+class EstacaoRegistro(BaseModel):
+    hostname: str
+    chave: str
+
+
 class TarefaCreate(BaseModel):
     projeto_id: int
     titulo: str

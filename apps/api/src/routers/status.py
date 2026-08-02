@@ -2,9 +2,10 @@ import os
 import shutil
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from ..config import settings
+from ..security import require_api_key
 
 router = APIRouter(prefix="/api", tags=["Status"])
 
@@ -23,7 +24,7 @@ async def get_status():
     }
 
 
-@router.get("/status_md")
+@router.get("/status_md", dependencies=[Depends(require_api_key)])
 async def get_status_md():
     paths = [
         os.path.expanduser("~/STATUS_ESTUDIOHC.md"),

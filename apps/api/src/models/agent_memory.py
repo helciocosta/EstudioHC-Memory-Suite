@@ -12,3 +12,4 @@ class AgentMemory(Base):
     project = Column(String(256))
     category = Column(String(64), default="task")
     content = Column(Text)
+    estacao = Column(String(128), default=None, nullable=True)

@@ -1,22 +1,28 @@
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..models.agent_memory import AgentMemory
 from ..schemas import MemoryEntry
+from ..security import Identity, get_current_estacao
 
 router = APIRouter(prefix="/memory", tags=["Memory"])
 
 
 @router.post("/remember")
-async def save_memory(entry: MemoryEntry, db: AsyncSession = Depends(get_db)):
+async def save_memory(
+    entry: MemoryEntry,
+    identity: Identity = Depends(get_current_estacao),
+    db: AsyncSession = Depends(get_db),
+):
     mem = AgentMemory(
         timestamp=datetime.now().isoformat(),
         agent_name=entry.agent_name,
+        estacao=identity.estacao,
         project=entry.project,
         category=entry.category,
         content=entry.content,
@@ -27,13 +33,17 @@ async def save_memory(entry: MemoryEntry, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/recall/{project}")
-async def get_memory(project: str, limit: int = 10, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(AgentMemory)
-        .where(AgentMemory.project == project)
-        .order_by(AgentMemory.timestamp.desc())
-        .limit(limit)
-    )
+async def get_memory(
+    project: str,
+    limit: int = Query(10, ge=1, le=200),
+    identity: Identity = Depends(get_current_estacao),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(AgentMemory).where(AgentMemory.project == project)
+    if identity.scope == "estacao":
+        query = query.where(AgentMemory.estacao == identity.estacao)
+    query = query.order_by(AgentMemory.timestamp.desc()).limit(limit)
+    result = await db.execute(query)
     rows = result.scalars().all()
     return [
         {
@@ -43,6 +53,7 @@ async def get_memory(project: str, limit: int = 10, db: AsyncSession = Depends(g
             "project": r.project,
             "category": r.category,
             "content": r.content,
+            "estacao": r.estacao,
         }
         for r in rows
     ]
@@ -59,18 +70,19 @@ def _readable(content: str) -> str:
 
 
 @router.get("/status/{project}")
-async def get_status(project: str, db: AsyncSession = Depends(get_db)):
+async def get_status(
+    project: str,
+    identity: Identity = Depends(get_current_estacao),
+    db: AsyncSession = Depends(get_db),
+):
+    base = select(AgentMemory.content).where(AgentMemory.project == project)
+    if identity.scope == "estacao":
+        base = base.where(AgentMemory.estacao == identity.estacao)
     result_pending = await db.execute(
-        select(AgentMemory.content)
-        .where(AgentMemory.project == project, AgentMemory.category == "task_pending")
-        .order_by(AgentMemory.timestamp.desc())
-        .limit(5)
+        base.where(AgentMemory.category == "task_pending").order_by(AgentMemory.timestamp.desc()).limit(5)
     )
     result_completed = await db.execute(
-        select(AgentMemory.content)
-        .where(AgentMemory.project == project, AgentMemory.category == "task_completed")
-        .order_by(AgentMemory.timestamp.desc())
-        .limit(3)
+        base.where(AgentMemory.category == "task_completed").order_by(AgentMemory.timestamp.desc()).limit(3)
     )
     return {
         "project": project,

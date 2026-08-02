@@ -8,6 +8,7 @@ API: /api/diarios, /api/diario, /api/nota, /api/projetos, /api/agenda, /api/kobo
 import json
 import os
 import glob
+import re
 import urllib.request
 import urllib.error
 from datetime import date
@@ -40,6 +41,8 @@ def get_diarios():
 
 def get_diario(data):
     """Retorna conteúdo de um diário específico."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data or ""):
+        return None
     caminho = f"{DIARIO_DIR}/{data}_COMPLETO.txt"
     if os.path.exists(caminho):
         with open(caminho, "r", encoding="utf-8") as f:
@@ -386,6 +389,8 @@ class HubHandler(SimpleHTTPRequestHandler):
 
         if path.startswith("/api/diario/"):
             data = path.split("/api/diario/")[1]
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data or ""):
+                return self.send_json({"erro": "data inválida"}, 400)
             d = get_diario(data)
             if d:
                 return self.send_json(d)

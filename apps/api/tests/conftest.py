@@ -6,6 +6,7 @@ import tempfile
 _tmp = tempfile.mkdtemp(prefix="estudiohc_test_")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_tmp}/test.db"
 os.environ["API_KEY"] = "test-key"
+os.environ["RATE_LIMIT_PER_MIN"] = "10000"
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient

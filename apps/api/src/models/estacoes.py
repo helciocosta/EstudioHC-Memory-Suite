@@ -10,3 +10,4 @@ class Estacao(Base):
     ip_tailscale = Column(String(64), default="desconhecido")
     ultimo_ping = Column(String(32))
     status = Column(String(32), default="offline")
+    chave_hash = Column(String(64), default=None, nullable=True)

@@ -50,7 +50,7 @@ def _call_opencode_docker(prompt: str) -> str:
     cmd = [
         "docker", "run", "--rm", "--name", "hermes-sandbox-run",
         "--network", "none", "--read-only", "--tmpfs", "/tmp",
-        "--workdir", "/work", "--memory", "512m",
+        "--tmpfs", "/home/sandbox", "--workdir", "/work", "--memory", "512m",
         SANDBOX_IMAGE, prompt,
     ]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

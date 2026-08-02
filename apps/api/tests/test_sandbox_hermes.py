@@ -35,6 +35,7 @@ async def test_sandbox_usa_docker_com_flags_restritivas(client, tmp_path):
     assert "--network" in cmd and "none" in cmd
     assert "--read-only" in cmd
     assert "--tmpfs" in cmd and "/tmp" in cmd
+    assert "--tmpfs" in cmd and "/home/sandbox" in cmd
     assert "--workdir" in cmd and "/work" in cmd
     assert "--rm" in cmd
     assert "hermes-sandbox:latest" in cmd

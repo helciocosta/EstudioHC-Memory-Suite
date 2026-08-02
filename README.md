@@ -299,6 +299,89 @@ Docs interativos: `/docs` (Swagger) e `/redoc` (ReDoc).
 > (exceto `/api/status` e `/api/status_md`) exigem o header `X-API-Key`.
 > Com `API_KEY` vazia (default), a API fica aberta — modo desenvolvimento.
 
+### Payloads e Exemplos
+
+Exemplos de integração (agenda, notas, diários, projetos, tarefas, estações e Hermes).
+Autenticação via header `X-API-Key` quando ativa.
+
+**Agenda** — `GET /api/agenda` lista todos os eventos.
+⚠️ **Atenção:** `POST /api/agenda` **substitui a agenda inteira** (apaga todos os
+eventos e insere a lista enviada). Envie sempre a lista completa.
+
+```bash
+curl -X POST "http://100.64.117.78:5050/api/agenda" \
+  -H "Content-Type: application/json" \
+  -d '{"eventos": [
+    {"id": "a1", "data": "2026-08-03", "hora": "09:00", "titulo": "Reunião equipe", "estacao": "central", "descricao": "Check-in semanal"},
+    {"id": "a2", "data": "2026-08-04", "hora": "14:30", "titulo": "Deploy", "estacao": "central"}
+  ]}'
+```
+
+**Notas** — `POST /api/nota` adiciona uma nota à estação informada.
+
+```bash
+curl -X POST "http://100.64.117.78:5050/api/nota" \
+  -H "Content-Type: application/json" \
+  -d '{"texto": "Ideia para o módulo de memória", "estacao": "central"}'
+```
+
+**Diários** — `GET /api/diarios` lista os diários; `GET /api/diario/{data}` lê o
+diário de `YYYY-MM-DD`; `POST /api/diario/{data}/resumo` salva/atualiza o resumo.
+
+```bash
+curl -X POST "http://100.64.117.78:5050/api/diario/2026-08-02/resumo" \
+  -H "Content-Type: application/json" \
+  -d '{"resumo": "Dia de manutenção do servidor", "agente": "opencode"}'
+```
+
+**Projetos** — `GET /api/projetos` lista; `POST /api/projetos/sync` cria/atualiza em lote.
+
+```bash
+curl -X POST "http://100.64.117.78:5050/api/projetos/sync" \
+  -H "Content-Type: application/json" \
+  -d '{"projetos": [
+    {"nome": "EstudioHC-Memory-Suite", "local_caminho": "~/Apps/EstudioHC-Memory-Suite", "status": "ativo", "tags": "memoria,ia", "estacao": "central"}
+  ]}'
+
+curl -X POST "http://100.64.117.78:5050/api/projetos/gerar-relatorio" \
+  -H "Content-Type: application/json" \
+  -d '{"nome": "EstudioHC-Memory-Suite", "estacao": "central"}'
+```
+
+**Tarefas** — CRUD completo.
+
+```bash
+curl -X POST "http://100.64.117.78:5050/api/tarefas" \
+  -H "Content-Type: application/json" \
+  -d '{"projeto_id": 1, "titulo": "Documentar payloads da API", "status": "pendente", "prioridade": "media", "data_limite": "2026-08-10"}'
+
+curl -X PUT "http://100.64.117.78:5050/api/tarefas/1" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "concluida", "prioridade": "alta"}'
+```
+
+**Estações** — `GET /api/estacoes` lista as estações conhecidas.
+`POST /api/estacoes/ping` aceita **query string** OU **body JSON**:
+
+```bash
+# Via query string
+curl -X POST "http://100.64.117.78:5050/api/estacoes/ping?hostname=pc-arquimedes&ip=100.64.117.5"
+
+# Via body JSON
+curl -X POST "http://100.64.117.78:5050/api/estacoes/ping" \
+  -H "Content-Type: application/json" \
+  -d '{"hostname": "pc-arquimedes", "ip": "100.64.117.5"}'
+```
+
+**Hermes** — `POST /api/hermes` chat com a IA central (OpenCode → Hermes).
+Rate limit de 10 req/min por IP.
+
+```bash
+curl -X POST "http://100.64.117.78:5050/api/hermes" \
+  -H "Content-Type: application/json" \
+  -d '{"mensagem": "Resuma o estado do projeto", "contexto": "README do EstudioHC"}'
+```
+
 ---
 
 ## MCP Memory Server

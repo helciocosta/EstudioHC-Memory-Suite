@@ -207,7 +207,7 @@ fi
 info "Registrando estação no servidor central..."
 curl -s -X POST "http://${SERVIDOR_CENTRAL}:5050/api/estacoes/ping" \
     -H "Content-Type: application/json" \
-    -d "{\"nome\":\"$(hostname)\",\"ip\":\"${TAILSCALE_IP}\",\"usuario\":\"$(whoami)\"}" \
+    -d "{\"hostname\":\"$(hostname)\",\"ip\":\"${TAILSCALE_IP}\"}" \
     >/dev/null 2>&1 && info "✅ Estação registrada em ${SERVIDOR_CENTRAL}:5050" \
     || warn "Não foi possível registrar estação. API offline?"
 

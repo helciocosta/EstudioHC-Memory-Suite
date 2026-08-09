@@ -5,7 +5,7 @@
 # Saída: /var/log/estudiohc-metrics.csv (também copiado para backups/)
 # Formato: timestamp,servico,rss_kb,cpu_pct,cache_hits,prompt_ms,temp_c
 
-set -euo pipefail
+set -uo pipefail
 
 LOG_DIR="${LOG_DIR:-$HOME/.local/share/estudiohc}"
 LOG_FILE="$LOG_DIR/estudiohc-metrics.csv"
@@ -63,6 +63,7 @@ except: print(0)
 
     # Temperatura (se sensors disponível)
     temp=$(sensors 2>/dev/null | grep -oP 'Package id 0:\s+\+\K[0-9.]+' | head -1 || echo "0")
+    temp=${temp:-0}
 
     echo "$TS,$service,$rss,$cpu,$cache_hits,$prompt_ms,$temp" >> "$LOG_FILE"
 }

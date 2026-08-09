@@ -25,7 +25,7 @@ collect_llama() {
     local service="$1"
     local port="$2"
     local pid
-    pid=$(pgrep -f "msty-llama-server.*--port $port" 2>/dev/null | head -1)
+    pid=$(pgrep -f "msty-llama-server.*--port $port" 2>/dev/null | head -1 || true)
 
     if [ -z "$pid" ]; then
         echo "$TS,$service,0,0,0,0,0" >> "$LOG_FILE"

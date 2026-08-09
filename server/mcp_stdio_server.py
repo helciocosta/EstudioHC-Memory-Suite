@@ -2,7 +2,7 @@ import asyncio
 import sqlite3
 import os
 from mcp.server.models import InitializationOptions
-from mcp.server import Notification, Server
+from mcp.server import Server, NotificationOptions
 import mcp.types as types
 from mcp.server.stdio import stdio_server
 
@@ -84,7 +84,7 @@ async def main():
             InitializationOptions(
                 server_name="estudiohc-memory",
                 server_version="0.1.0",
-                capabilities=server.get_capabilities(),
+                capabilities=server.get_capabilities(NotificationOptions(), {}),
             ),
         )
 

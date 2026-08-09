@@ -471,7 +471,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         elif name == "get_status":
             project = _validar_project(arguments.get("project", "opencode"))
-            result = await call_api("GET", f"/status/{project}")
+            result = await call_api("GET", f"/memory/status/{project}")
             parts = [f"--- Status for [{project}] ---"]
             if result.get("pending"):
                 parts.append("\nPending:")

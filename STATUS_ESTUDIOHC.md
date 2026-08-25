@@ -1,6 +1,6 @@
 # 🧠 EstudioHC — Status do Projeto Central
 
-**Última atualização:** 2026-08-02  
+**Última atualização:** 2026-08-25  
 **Estação de origem:** vmi2968998 (Servidor Central)  
 **Responsável:** deploy@vmi2968998  
 **Versão do stack:** v4.3
@@ -285,4 +285,50 @@ git status && git add . && git commit -m "mensagem" && git push
 
 ---
 
-*Documento mantido no servidor central. Atualizado em 2026-08-02.*
+*Documento mantido no servidor central. Atualizado em 2026-08-25.*
+
+---
+
+## 🔧 Fase 1 — Correções de Produção (2026-08-25)
+
+Auditoria completa do stack (v4.4) para produção real. 4 bugs de integração corrigidos e
+**versionados** (commits `6c48e58`, `d8a5fde`):
+
+1. **Sync-Connect** (`apps/sync-connect/main.py`) — todas as 7 rotas agora mapeiam os schemas
+   reais da API central:
+   - `/sync/logseq/diario` e `/sync/joplin/nota` → `POST /api/nota` (`{texto, estacao}`)
+   - `/sync/joplin/tarefa` e `/sync/todo/tarefa` → `POST /api/tarefas` (resolve `projeto_id`)
+   - `/sync/vikunja/projeto` → `POST /api/projetos/sync` (`{projetos:[...]}`)
+   - `/sync/ghost/relatorio` → persistido como **nota** (não dispara `/gerar-relatorio`, que
+     roda IA e trava)
+   - `/sync/agenda` → `POST /api/agenda` (`{eventos:[...]}`)
+   - Chave: drop-in systemd `override-api-key.conf` com a API_KEY real (antes `auto-sync`
+     inexistente → 401 em tudo). Validado: todos os 6 integradores respondem 200/201.
+2. **FAISS / busca vetorial** (`apps/mcp-memory/src/embedder.py`) — `cache_folder` +
+   `local_files_only` (modelo `all-MiniLM-L6-v2` já em cache local). Antes: timeout de
+   download → `Vector search disabled`. Agora: **rebuild automático com 45 vetores** no
+   startup. Validado: `.faiss_index.json` populado.
+3. **Working Memory persistente** (`apps/mcp-memory/src/memory_server_sse.py`) — WM salva em
+   `.working_memory.json` (antes volátil, perdida em restart). Validado: `wm_push` →
+   restart do serviço → `wm_list` mantém o item.
+4. **Sanitização de dados** (`apps/api/src/routers/memory.py`) — `agent_name`/`project`/
+   `category` com `strip()` no `/memory/remember` + 14 registros existentes corrigidos
+   (nomes com padding de versões de sistema). Validado: id 154 gravado limpo.
+
+### Estado atual (2026-08-25)
+
+| Serviço | Status | Nota |
+|---|---|---|
+| `estudiohc-api` (5050, SSL) | ✅ ativo | auth X-API-Key + rate limit |
+| `estudiohc-dashboard` (8585) | ✅ ativo | online |
+| `estudiohc-mcp-sse` (5051) | ✅ ativo | 12 tools, FAISS 45 vetores, WM persistente |
+| `estudiohc-sync-connect` (5052) | ✅ ativo | 6 integradores funcionando |
+| `estudiohc-backup/monitor/alerts` | ✅ timers | rotina ok |
+
+### Pendências abertas (Fase 2+)
+
+- Backup distribuído: servidor `estudiohc` (100.107.208.50) como **espelho de backup** quando
+  online (nó Tailscale legítimo).
+- Migração SQLite → Postgres quando >1 estação escrever simultaneamente (WAL já ativo).
+- Revisão da chave `API_KEY` do sync por estação (hoje usa a master).
+- Rotina de restore testada do backup diário (`memory-db.*`).

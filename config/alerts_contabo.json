@@ -1,0 +1,42 @@
+{
+  "smtp": {
+    "enabled": true,
+    "host": "smtp.gmail.com",
+    "port": 587,
+    "username": "seu-email@gmail.com",
+    "password": "sua-senha-de-app",
+    "use_tls": true,
+    "from_email": "seu-email@gmail.com",
+    "from_name": "EstudioHC Contabo Alerts"
+  },
+  "recipients": {
+    "critical": ["helciocosta@gmail.com"],
+    "warning": ["helciocosta@gmail.com"],
+    "info": []
+  },
+  "webhook": {
+    "enabled": false,
+    "url": "",
+    "headers": {}
+  },
+  "thresholds": {
+    "memory_percent": 85,
+    "disk_percent": 90,
+    "cpu_percent": 90,
+    "swap_percent": 80,
+    "backup_age_hours": 30,
+    "sync_age_hours": 12,
+    "llama_memory_gb": 10,
+    "llama_cpu_percent": 80
+  },
+  "services_to_monitor": [
+    "ollama.service",
+    "estudiohc-api.service",
+    "estudiohc-dashboard.service",
+    "estudiohc-mcp-sse.service",
+    "chromadb-mcp.service",
+    "estudiohc-backup.timer",
+    "estudiohc-monitor.timer",
+    "tailscaled.service"
+  ]
+}

@@ -10,7 +10,8 @@ import os
 import random
 import re
 from datetime import datetime, timezone
-from typing import Any
+
+from contextlib import asynccontextmanager
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -18,10 +19,6 @@ from mcp.client.sse import sse_client
 CHROMA_MCP_URL = os.getenv("CHROMA_MCP_URL", "http://localhost:8765/mcp")
 SSE_TIMEOUT = float(os.getenv("CHROMA_SSE_TIMEOUT", "10"))
 CHROMA_API_KEY = os.getenv("CHROMA_API_KEY", "")
-
-_session: ClientSession | None = None
-_streams: Any | None = None
-_lock = asyncio.Lock()
 
 
 def _collection(project: str) -> str:
@@ -34,29 +31,25 @@ def _slugify(title: str) -> str:
     return slug or "doc"
 
 
-async def _get_session() -> ClientSession:
-    global _session, _streams
-    async with _lock:
-        if _session is not None:
-            return _session
-        _streams = sse_client(CHROMA_MCP_URL, timeout=SSE_TIMEOUT)
-        read_stream, write_stream = await _streams.__aenter__()
-        _session = ClientSession(read_stream, write_stream)
-        await _session.__aenter__()
-        await _session.initialize()
-        return _session
+@asynccontextmanager
+async def _session_ctx():
+    """Sessao SSE efemera, criada e fechada na MESMA task.
 
+    O mcp-python 1.28.1 tem um bug de teardown (cancel scope cruzado) quando a
+    sessao SSE e fechada por uma task diferente da que a criou -- o que
+    acontecia com a sessao cacheada global quando o FastMCP cancelava a task
+    do handler (doc_add etc.), derrubando o processo inteiro. Sessao por
+    chamada elimina o caso.
+    """
+    streams = sse_client(CHROMA_MCP_URL, timeout=SSE_TIMEOUT)
+    async with streams as (read_stream, write_stream):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            yield session
 
 async def close() -> None:
-    global _session, _streams
-    async with _lock:
-        if _session is not None:
-            await _session.__aexit__(None, None, None)
-            _session = None
-        if _streams is not None:
-            await _streams.__aexit__(None, None, None)
-            _streams = None
-
+    """No-op mantido por compatibilidade (sessoes agora sao efemeras)."""
+    return None
 
 async def _call_tool(name: str, arguments: dict) -> dict:
     if CHROMA_API_KEY:
@@ -64,8 +57,9 @@ async def _call_tool(name: str, arguments: dict) -> dict:
     last_err: Exception | None = None
     for attempt in range(3):
         try:
-            session = await _get_session()
-            result = await asyncio.wait_for(session.call_tool(name, arguments), timeout=30)
+            async with _session_ctx() as session:
+                async with asyncio.timeout(30):
+                    result = await session.call_tool(name, arguments)
             text = "".join(c.text for c in result.content if getattr(c, "type", "") == "text")
             if getattr(result, "isError", False):
                 raise ValueError(text)
@@ -75,7 +69,6 @@ async def _call_tool(name: str, arguments: dict) -> dict:
                 return {"text": text}
         except Exception as e:
             last_err = e
-            await close()
             if attempt < 2:
                 await asyncio.sleep(0.5 * (2 ** attempt) + random.uniform(0, 0.3))
     raise last_err if last_err else ValueError(f"tool call failed: {name}")

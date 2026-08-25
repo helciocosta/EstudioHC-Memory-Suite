@@ -54,3 +54,10 @@ backups/
 
 # Model binaries (GGUF)
 models/
+# backups
+*.bak.*
+*~
+
+# temp
+/tmp/
+/data/todo/

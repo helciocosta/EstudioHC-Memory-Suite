@@ -1,0 +1,5 @@
+FROM python:3.12-slim
+RUN pip install requests -q
+COPY todo_server.py /app/todo_server.py
+WORKDIR /app
+CMD [python, todo_server.py]

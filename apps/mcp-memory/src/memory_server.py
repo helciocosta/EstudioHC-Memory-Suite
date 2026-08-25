@@ -18,6 +18,16 @@ import chroma_client as chroma
 
 MEMORY_API_URL = os.getenv("MEMORY_API_URL", "https://127.0.0.1:5050")
 MEMORY_API_KEY = os.getenv("MEMORY_API_KEY", "")
+if not MEMORY_API_KEY:
+    # Fallback: spawn via ssh sem environment -> le a chave do .env da API central
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "api", ".env"), encoding="utf-8") as _f:
+            for _line in _f:
+                if _line.startswith("API_KEY="):
+                    MEMORY_API_KEY = _line.strip().split("=", 1)[1]
+                    break
+    except OSError:
+        pass
 AGENT_NAME = os.getenv("AGENT_NAME", "opencode")
 SUMMARIZE_THRESHOLD = int(os.getenv("MEMORY_SUMMARIZE_THRESHOLD", "60"))
 MAX_INJECT = int(os.getenv("MEMORY_MAX_INJECT", "3"))

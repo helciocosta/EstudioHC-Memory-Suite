@@ -21,10 +21,10 @@ async def save_memory(
 ):
     mem = AgentMemory(
         timestamp=datetime.now().isoformat(),
-        agent_name=entry.agent_name,
+        agent_name=entry.agent_name.strip(),
         estacao=identity.estacao,
-        project=entry.project,
-        category=entry.category,
+        project=entry.project.strip(),
+        category=entry.category.strip(),
         content=entry.content,
     )
     db.add(mem)

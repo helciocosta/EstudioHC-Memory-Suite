@@ -61,3 +61,7 @@ models/
 # temp
 /tmp/
 /data/todo/
+
+# estado runtime e backups de auditoria
+.working_memory.json
+*.bak_audit*

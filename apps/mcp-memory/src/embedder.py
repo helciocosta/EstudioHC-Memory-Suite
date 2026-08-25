@@ -21,7 +21,20 @@ def _load_model_sync():
     """Load sentence-transformer model (blocking, called from thread)."""
     global MODEL
     from sentence_transformers import SentenceTransformer
-    MODEL = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+    import os as _os
+    cache = _os.path.expanduser(
+        _os.environ.get("SENTENCE_TRANSFORMERS_HOME", "/home/deploy/.cache/huggingface/hub"))
+    kwargs = dict(
+        cache_folder=cache,
+        local_files_only=True,
+        device="cpu",
+    )
+    # tenta primeiro offline; se o modelo nao estiver cacheado cai para online
+    try:
+        MODEL = SentenceTransformer("all-MiniLM-L6-v2", **kwargs)
+    except Exception as _e:
+        kwargs.pop("local_files_only", None)
+        MODEL = SentenceTransformer("all-MiniLM-L6-v2", **kwargs)
 
 
 def _lazy_load_model():

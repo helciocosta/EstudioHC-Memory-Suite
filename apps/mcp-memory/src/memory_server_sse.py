@@ -49,8 +49,31 @@ def count_tokens(text: str) -> int:
 server = Server("estudiohc-memory")
 
 class WorkingMemory:
+    """Working Memory persistida em disco (JSON) para sobreviver a restarts."""
+    WM_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".working_memory.json")
+
     def __init__(self):
         self._items = []
+        self._load()
+
+    def _load(self):
+        try:
+            with open(self.WM_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                self._items = data
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"[memory] WM load falhou (usa vazia): {e}", file=sys.stderr)
+
+    def _persist(self):
+        try:
+            with open(self.WM_FILE, "w", encoding="utf-8") as f:
+                json.dump(self._items, f, ensure_ascii=False, indent=1)
+        except Exception as e:
+            print(f"[memory] WM persist falhou: {e}", file=sys.stderr)
+
     def push(self, content: str, category: str = "context") -> int:
         tokens = count_tokens(content)
         self._items.append({
@@ -63,29 +86,40 @@ class WorkingMemory:
         while total > MEMORY_MAX_TOKENS and len(self._items) > 1:
             removed = self._items.pop(0)
             total -= removed["tokens"]
-            print(f"[memory] WM budget {MEMORY_MAX_TOKENS} exceeded, dropped oldest ({removed['tokens']} tok)", file=sys.stderr)
+            print(f"[memory] WM budget {MEMORY_MAX_TOKENS} exceeded, dropped oldest ({removed[tokens]} tok)", file=sys.stderr)
+        self._persist()
         return len(self._items)
+
     def _total_tokens(self) -> int:
         return sum(i.get("tokens", count_tokens(i["content"])) for i in self._items)
-    def pop(self) -> dict:
-        return self._items.pop() if self._items else None
+
+    def pop(self):
+        item = self._items.pop() if self._items else None
+        self._persist()
+        return item
+
     def list(self) -> list:
         return list(self._items)
+
     def clear(self, category: str = "") -> int:
         if category:
             before = len(self._items)
             self._items = [i for i in self._items if i["category"] != category]
-            return before - len(self._items)
+            removed = before - len(self._items)
         else:
-            count = len(self._items)
+            removed = len(self._items)
             self._items = []
-            return count
+        self._persist()
+        return removed
+
     def consolidate(self, category: str = "") -> list:
         to_persist = self._items[:]
         if category:
             to_persist = [i for i in to_persist if i["category"] == category]
         self._items = [i for i in self._items if i not in to_persist]
+        self._persist()
         return to_persist
+
 
 wm = WorkingMemory()
 

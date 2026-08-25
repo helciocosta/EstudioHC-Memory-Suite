@@ -73,3 +73,23 @@ Ver: docs/project-management.md
 
 ## Licenca
 MIT — Helcio O. Costa
+
+---
+## Infraestrutura Final (Contabo)
+
+| Subdomínio | Porta | Serviço | Status |
+|-----------|-------|---------|--------|
+| http://logseq.estudiohc.dns | 5053 | Logseq (memória/diário) | ✅ |
+| http://joplin.estudiohc.dns | 5054 | Joplin (notas/tarefas) | ✅ |
+| http://vikunja.estudiohc.dns | 5055 | Vikunja (projetos) | ✅ |
+| http://ghost.estudiohc.dns | 5056 | Ghost (blog) | ✅ |
+| http://todo.estudiohc.dns | 5057 | MS To Do sync | ✅ |
+
+## Como Acessar (Tailscale)
+100.64.117.78 logseq.estudiohc.dns joplin.estudiohc.dns vikunja.estudiohc.dns ghost.estudiohc.dns todo.estudiohc.dns
+
+## Stack Completo — Secretário Digital
+- 5 serviços rodando em Docker no Contabo
+- Traefik reverse proxy com subdomínios
+- PC local zero — tudo no servidor
+- Quando PC desligar: Contabo mantém tudo

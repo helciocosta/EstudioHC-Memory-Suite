@@ -49,7 +49,11 @@ Ver: docs/microsoft-todo-integration.md
 ## Gerenciamento de Projetos
 Ver: docs/project-management.md
 
-## Estacoes Tailscale Gerenciadas (8 nos)
+## Estacoes Tailscale Gerenciadas (nós)
+
+> Registradas no banco (2026-08-25): **12 nós** (vmi2968998, estudiohc, esutdiohc-i5-1,
+> HELCIO-X99-B, Esteção X79G, mais registros antigos/smoke).
+> Cada estação é um nó Tailscale legítimo — NÃO remover sem confirmação.
 
 | Estacao | IP | Sistema | Status |
 |---------|-----|---------|--------|
@@ -62,7 +66,21 @@ Ver: docs/project-management.md
 | luizanoot | 100.97.197.7 | Windows | Offline |
 | pc062858521 | 100.72.65.78 | Linux | Offline |
 
-## Docker (17 containers ativos)
+## Producao — 2026-08-25 (Fase 1)
+
+Auditoria completa para producao real. 4 bugs de integracao corrigidos e versionados:
+
+1. **Sync-Connect** (5052): chave real no systemd (drop-in) + mapeamento correto dos schemas
+   da API. Todos os 6 integradores validados (200/201). Ver HANDOFF.md §3.1.
+2. **FAISS/busca vetorial**: embedder com cache local + local_files_only → rebuild com
+   **45 vetores** no startup (antes desabilitado por timeout de download).
+3. **Working Memory persistente**: salva em `.working_memory.json` (sobrevive a restarts).
+4. **Sanitizacao**: `agent_name/project/category` com strip no `/memory/remember` + dados existentes corrigidos.
+
+Commits: `6c48e58`, `d8a5fde`, `af055db`, `eff5e28`.
+Leia **`HANDOFF.md`** (continuidade/operacao) e **`STATUS_ESTUDIOHC.md`** (estado detalhado).
+
+## Docker (22 containers ativos)
 - Studyield (backend + frontend + postgres + redis + clickhouse)
 - Omniroute
 - Qdrant

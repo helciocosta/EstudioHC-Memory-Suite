@@ -1,0 +1,98 @@
+networks:
+  coolify:
+    external: true
+    name: coolify
+
+services:
+  logseq:
+    image: contrun/logseq:latest
+    container_name: logseq
+    ports:
+      - '5053:80'
+    volumes:
+      - ./data/logseq:/logseq/data
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.logseq.rule=Host(`logseq.estudiohc.dns`)'
+      - 'traefik.http.services.logseq.loadbalancer.server.port=80'
+      - 'traefik.http.routers.logseq.entrypoints=http'
+    restart: unless-stopped
+    networks:
+      - coolify
+
+  joplin:
+    image: joplin/server:latest
+    container_name: joplin
+    ports:
+      - '5054:22300'
+    volumes:
+      - ./data/joplin:/home/joplin/data
+    environment:
+      - APP_BASE_URL=https://joplin.estudiohc.dns
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.joplin.rule=Host(`joplin.estudiohc.dns`)'
+      - 'traefik.http.services.joplin.loadbalancer.server.port=22300'
+      - 'traefik.http.routers.joplin.entrypoints=http'
+    restart: unless-stopped
+    networks:
+      - coolify
+
+  vikunja:
+    image: vikunja/vikunja:latest
+    container_name: vikunja
+    ports:
+      - '5055:3456'
+    volumes:
+      - ./data/vikunja:/app/vikunja/files
+      - ./data/vikunja_db:/db
+    environment:
+      - VIKUNJA_SERVICE_JWTSECRET=secret-key-vikunja
+      - VIKUNJA_SERVICE_PUBLICURL=https://vikunja.estudiohc.dns
+      - VIKUNJA_DATABASE_TYPE=sqlite
+      - VIKUNJA_DATABASE_PATH=/db/vikunja.db
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.vikunja.rule=Host(`vikunja.estudiohc.dns`)'
+      - 'traefik.http.services.vikunja.loadbalancer.server.port=3456'
+      - 'traefik.http.routers.vikunja.entrypoints=http'
+    restart: unless-stopped
+    networks:
+      - coolify
+
+  ghost:
+    image: ghost:latest
+    container_name: ghost
+    ports:
+      - '5056:2368'
+    volumes:
+      - ./data/ghost:/var/lib/ghost/content
+    environment:
+      - url=https://ghost.estudiohc.dns
+      - database__client=sqlite3
+      - database__connection__filename=/var/lib/ghost/content/ghost.db
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.ghost.rule=Host(`ghost.estudiohc.dns`)'
+      - 'traefik.http.services.ghost.loadbalancer.server.port=2368'
+      - 'traefik.http.routers.ghost.entrypoints=http'
+    restart: unless-stopped
+    networks:
+      - coolify
+
+  todo-sync:
+    image: python:3.12-slim
+    container_name: todo-sync
+    ports:
+      - '5057:5057'
+    volumes:
+      - ./apps/todo-sync/todo_server.py:/app/todo_server.py
+    command: python /app/todo_server.py
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.todo.rule=Host(`todo.estudiohc.dns`)'
+      - 'traefik.http.services.todo.loadbalancer.server.port=5057'
+      - 'traefik.http.routers.todo.entrypoints=http'
+    restart: unless-stopped
+    networks:
+      - coolify

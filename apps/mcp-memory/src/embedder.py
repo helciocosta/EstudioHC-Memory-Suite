@@ -13,6 +13,7 @@ _MODEL_LOCK = threading.Lock()
 _MODEL_LOADED = False
 
 INDEX_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".faiss_index.json")
+FAISS_BIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".faiss_index.bin")
 EMBED_DIM = 384
 MODEL_LOAD_TIMEOUT = 30  # seconds
 
@@ -91,6 +92,14 @@ def _get_index():
     if not _lazy_load_faiss():
         return None
     import faiss
+    # Try to load existing index
+    if os.path.exists(FAISS_BIN_FILE):
+        try:
+            INDEX = faiss.read_index(FAISS_BIN_FILE)
+            print(f"[embedder] Loaded FAISS index with {INDEX.ntotal} vectors", file=sys.stderr)
+            return INDEX
+        except Exception as e:
+            print(f"[embedder] Failed to load FAISS index: {e}", file=sys.stderr)
     INDEX = faiss.IndexFlatIP(EMBED_DIM)
     return INDEX
 
@@ -165,10 +174,15 @@ def rebuild(texts: list[tuple[str, str]] = None):
 
 
 def _save_index():
+    global INDEX
     data = {"id_map": ID_MAP, "next_pos": NEXT_POS}
     try:
         with open(INDEX_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f)
+        if INDEX is not None and INDEX.ntotal > 0:
+            import faiss
+            faiss.write_index(INDEX, FAISS_BIN_FILE)
+            print(f"[embedder] Saved FAISS index with {INDEX.ntotal} vectors", file=sys.stderr)
     except Exception as e:
         print(f"[embedder] save index failed: {e}", file=sys.stderr)
 
@@ -194,3 +208,7 @@ def status() -> dict:
         "index_size": idx.ntotal if idx else 0,
         "dimension": EMBED_DIM,
     }
+
+# Load index on module import
+_load_index()
+

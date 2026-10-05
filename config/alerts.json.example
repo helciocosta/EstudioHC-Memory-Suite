@@ -1,0 +1,37 @@
+{
+  "smtp": {
+    "enabled": true,
+    "host": "smtp.gmail.com",
+    "port": 587,
+    "username": "seu-email@gmail.com",
+    "password": "preencha-com-senha-de-app",
+    "use_tls": true,
+    "from_email": "seu-email@gmail.com",
+    "from_name": "EstudioHC Alerts"
+  },
+  "recipients": {
+    "critical": ["seu-email@gmail.com"],
+    "warning": ["seu-email@gmail.com"],
+    "info": []
+  },
+  "webhook": {
+    "enabled": false,
+    "url": "",
+    "headers": {}
+  },
+  "thresholds": {
+    "memory_percent": 85,
+    "disk_percent": 90,
+    "cpu_percent": 90,
+    "swap_percent": 80,
+    "backup_age_hours": 30,
+    "sync_age_hours": 12
+  },
+  "services_to_monitor": [
+    "koboldcpp.service",
+    "estudiohc-hub.service",
+    "estudiohc-backup.timer",
+    "estudiohc-monitor.timer",
+    "tailscaled.service"
+  ]
+}

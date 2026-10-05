@@ -11,7 +11,10 @@ set -euo pipefail
 
 REPO_DIR="$HOME/Apps/EstudioHC-Memory-Suite"
 BACKUP_DIR="$REPO_DIR/backups"
-DB="$REPO_DIR/data/estudiohc.db"
+# Banco principal (MCP stdio server)
+DB_PRIMARY="$REPO_DIR/server/estudiohc_memory.db"
+# Banco da API (se existir)
+DB_API="$REPO_DIR/data/estudiohc.db"
 FAISS="$REPO_DIR/apps/mcp-memory/src/.faiss_index.pkl"
 RETENTION_DAYS=7
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
@@ -38,13 +41,14 @@ backup_file() {
 }
 
 echo "[backup] === EstudioHC Backup $(date) ==="
-backup_file "$DB" "memory-db"
+backup_file "$DB_PRIMARY" "memory-db-primary"
+[ -f "$DB_API" ] && backup_file "$DB_API" "memory-db-api"
 backup_file "$FAISS" "faiss-index"
 
 # Limpeza de backups antigos
 if [ "$DRY_RUN" = "false" ]; then
-    find "$BACKUP_DIR" -name "memory-db.*" -mtime +$RETENTION_DAYS -delete
-    find "$BACKUP_DIR" -name "faiss-index.*" -mtime +$RETENTION_DAYS -delete
+    find "$BACKUP_DIR" -name "memory-db-*.${TIMESTAMP}*" -mtime +$RETENTION_DAYS -delete 2>/dev/null || true
+    find "$BACKUP_DIR" -name "faiss-index.*" -mtime +$RETENTION_DAYS -delete 2>/dev/null || true
     echo "[backup] Limpeza: backups com mais de $RETENTION_DAYS dias removidos"
 fi
 

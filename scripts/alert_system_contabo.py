@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 import logging
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _env  # noqa: F401,E402  — carrega o .env (MEMORY_API_KEY)
+
 # Config paths
 CONFIG_FILE = Path.home() / "Apps/EstudioHC-Memory-Suite/config/alerts_contabo.json"
 LOG_FILE = Path.home() / "Apps/EstudioHC-Memory-Suite/logs/alerts_contabo.log"
@@ -329,7 +332,10 @@ def check_backup_age(config: Dict) -> Dict[str, Any]:
 def check_memory_api_sync(config: Dict) -> Dict[str, Any]:
     """Check if memory API has recent data."""
     try:
-        api_key = "7a2f4aed8ce8b4d6d5657686cbae94fb07882d598ae65f55320ca0afe82009b2"
+        # Chave via ambiente — nunca hardcoded no repositório.
+        api_key = os.environ.get("MEMORY_API_KEY", "")
+        if not api_key:
+            return {"error": "MEMORY_API_KEY não definida", "healthy": False}
         url = "https://localhost:5050/recall/EstudioHC?limit=1"
         
         req = urllib.request.Request(url, headers={"X-Api-Key": api_key})

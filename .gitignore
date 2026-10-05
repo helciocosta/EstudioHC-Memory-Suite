@@ -36,7 +36,10 @@ dist/
 # FAISS index (binary state, regenerated on startup)
 *.pkl
 .faiss_index.pkl
-.faiss_index.json
+.faiss_index.bin
+
+# Config local de alertas (contém senha SMTP)
+config/alerts.json
 
 # TLS certificates (auto-signed, generated on server)
 *.pem

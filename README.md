@@ -1,113 +1,83 @@
-# EstudioHC Memory Suite v4.4
+# EstudioHC Memory Suite v4.5
 
-**Secretario Digital Pessoal** — Coordena, comanda e gerencia todas as notas,
-memorias, tarefas, agendas, correcoes e dados dos agentes locais e remotos.
-Projetado como um secretario profissional, moderno e totalmente funcional.
+**Secretário Digital e Orquestrador Central de Inteligência** — Coordena, comanda e gerencia todas as notas, memórias, tarefas, agendas, documentos vetoriais e dados dos agentes locais e remotos em toda a rede Tailscale.
 
-## Arquitetura
+---
 
+## 🏛️ Topologia e Diretrizes de Engenharia (2026-10-26)
 
+O **EstudioHC Memory Suite** opera sob uma arquitetura de alta resiliência e eficiência energética:
+
+1. **Hub Central 24/7 (VPS Contabo `100.64.117.78`)**:
+   - **Servidor Principal Absoluto**: opera de forma ininterrupta provendo a API Central (:5050 HTTPS), MCP SSE (:5051), ChromaDB (:8765), Sync-Connect (:5052), Dashboard (:8585) e o banco mestre SQLite (`data/estudiohc.db`).
+2. **Laboratório Sob Demanda & Reserva Imediata (Servidor Local 32GB `100.107.208.50`)**:
+   - **Economia de Energia**: Opera como ambiente de desenvolvimento e processamento pesado local (Ollama, fine-tuning). Permanece desligado a maior parte do tempo, sendo ligado sob demanda por poucas horas.
+   - **Reserva de Contingência Total (Cold Standby com Auto-Boot)**: Ao ser inicializado, se a VPS Contabo estiver offline, assume 100% da stack e rede com sincronização reversa (failback) sem perda de dados.
+3. **Coletores Locais Obsidian nas Estações de Trabalho**:
+   - As estações (`win-x99` e `linux-i5`) utilizam o **Obsidian** como coletor ativo de conhecimento, notas diárias e telemetria (ActivityWatch + Git commits).
+   - Ingestão contínua para a API (`POST /api/nota`) e ChromaDB (`doc_add`).
+   - Sincronização e atualização contínua das **Agendas Locais das Estações** (`00 - Painel/Agenda.md` e diários) com `/api/agenda`.
+4. **Ciclo de Vida de Tarefas Automatizado no Repositório (Ledger Git)**:
+   - Todo início (`[IN_PROGRESS]`), progresso e conclusão (`[COMPLETED]`) de tarefas executadas por equipes e agentes é versionado com commits e pushes automáticos para o GitHub (`origin master`).
+
+> **Plano Completo de Implementação:** Consulte `docs/superpowers/plans/2026-10-26-orquestrador-central-failover-contingencia.md`.  
+> **Guia de Continuidade:** Consulte `HANDOFF.md` e `STATUS_ESTUDIOHC.md`.
+
+---
 
 ## Componentes
 
-### 1. API Central (5050)
-FastAPI + Uvicorn com SSL. Rotas: /api/diarios, /api/nota, /api/tarefas,
-/api/agenda, /api/projetos, /api/estacoes, /api/hermes.
-Memoria vetorial: ChromaDB + Qdrant + Ollama. Autenticacao via X-API-Key.
+### 1. API Central (5050 HTTPS)
+FastAPI + Uvicorn com SSL/TLS. Rotas: `/api/diarios`, `/api/nota`, `/api/tarefas`, `/api/agenda`, `/api/projetos`, `/api/estacoes`, `/api/hermes`, `/api/status`.
+Autenticação via `X-API-Key`.
 
-### 2. Sync Connect (5052) — NOVO
-Bridge entre os 5 servicos do stack e a API central.
-- POST /sync/logseq/diario  <- Logseq
-- POST /sync/joplin/nota    <- Joplin
-- POST /sync/joplin/tarefa  <- Joplin
-- POST /sync/vikunja/projeto <- Vikunja
-- POST /sync/ghost/relatorio <- Ghost
-- POST /sync/todo/tarefa    <- Microsoft To Do
-- POST /sync/agenda         <- Qualquer servico
-- GET /health               <- Healthcheck
+### 2. MCP SSE Server (5051 SSE)
+Bridge SSE (FastMCP) para agentes remotos (OMP, Antigravity CLI `agy`, OpenCode, Claude Code) consumirem e registrarem memórias de longo prazo, working memory e pesquisa semântica.
 
-### 3. MCP SSE (5051)
-Bridge para agentes OMP consultarem/escreverem memoria persistente.
-Suporte a memoria com decay temporal (30 dias).
+### 3. ChromaDB MCP Server (8765 SSE)
+Camada documental vetorial isolada por coleções de projeto (`docs_<project>`), exposta via MCP SSE para busca semântica em documentos inteiros.
 
-### 4. Dashboard (8585)
-UI web de gerenciamento com visualizacao de memoria, notas e tarefas.
+### 4. Sync Connect (5052 HTTP)
+Bridge unificadora entre os serviços do ecossistema e a API central:
+- `POST /sync/logseq/diario` <- Logseq
+- `POST /sync/joplin/nota` <- Joplin
+- `POST /sync/joplin/tarefa` <- Joplin
+- `POST /sync/vikunja/projeto` <- Vikunja
+- `POST /sync/ghost/relatorio` <- Ghost
+- `POST /sync/todo/tarefa` <- Microsoft To Do
+- `POST /sync/agenda` <- Calendários / Obsidian Agenda
+- `GET /health` <- Healthcheck
 
-## Stack de Servicos (Secretario Digital)
-
-| Servico | Funcao | Sincroniza em |
-|---------|--------|---------------|
-| Logseq | Memoria, diario, tarefas, agenda | /sync/logseq/diario |
-| Joplin | Notas, tarefas, calendario, lembretes | /sync/joplin/nota e /sync/joplin/tarefa |
-| Vikunja | Projetos, tarefas, agenda | /sync/vikunja/projeto |
-| Ghost | Blog, relatorios, pagina web | /sync/ghost/relatorio |
-| Microsoft To Do | Tarefas diarias | /sync/todo/tarefa |
-
-## Integracao Microsoft To Do
-Ver: docs/microsoft-todo-integration.md
-
-## Gerenciamento de Projetos
-Ver: docs/project-management.md
-
-## Estacoes Tailscale Gerenciadas (nós)
-
-> Registradas no banco (2026-08-25): **12 nós** (vmi2968998, estudiohc, esutdiohc-i5-1,
-> HELCIO-X99-B, Esteção X79G, mais registros antigos/smoke).
-> Cada estação é um nó Tailscale legítimo — NÃO remover sem confirmação.
-
-| Estacao | IP | Sistema | Status |
-|---------|-----|---------|--------|
-| esutdiohc-i5-1 | 100.97.90.121 | Windows | Ativa |
-| estudiohc (Contabo) | 100.107.208.50 | Linux | Ativa |
-| vmi2968998 (Contabo) | 100.64.117.78 | Linux | Ativa |
-| estudio-x79 | 100.64.48.115 | Windows | Offline |
-| estudiohc-x79g | 100.94.239.93 | Linux | Offline |
-| helcio-x99-b | 100.122.75.73 | Linux | Offline |
-| luizanoot | 100.97.197.7 | Windows | Offline |
-| pc062858521 | 100.72.65.78 | Linux | Offline |
-
-## Producao — 2026-08-25 (Fase 1)
-
-Auditoria completa para producao real. 4 bugs de integracao corrigidos e versionados:
-
-1. **Sync-Connect** (5052): chave real no systemd (drop-in) + mapeamento correto dos schemas
-   da API. Todos os 6 integradores validados (200/201). Ver HANDOFF.md §3.1.
-2. **FAISS/busca vetorial**: embedder com cache local + local_files_only → rebuild com
-   **45 vetores** no startup (antes desabilitado por timeout de download).
-3. **Working Memory persistente**: salva em `.working_memory.json` (sobrevive a restarts).
-4. **Sanitizacao**: `agent_name/project/category` com strip no `/memory/remember` + dados existentes corrigidos.
-
-Commits: `6c48e58`, `d8a5fde`, `af055db`, `eff5e28`.
-Leia **`HANDOFF.md`** (continuidade/operacao) e **`STATUS_ESTUDIOHC.md`** (estado detalhado).
-
-## Docker (22 containers ativos)
-- Studyield (backend + frontend + postgres + redis + clickhouse)
-- Omniroute
-- Qdrant
-- Beszel + Beszel Agent (monitoramento)
-- Netdata (monitoramento)
-- Portainer (gerenciamento)
-- Coolify (PaaS) + Coolify DB + Redis + Realtime + Proxy (Traefik)
-
-## Licenca
-MIT — Helcio O. Costa
+### 5. Dashboard (8585 HTTP)
+UI web moderna de visualização e gestão operacional de memórias, notas, tarefas e estações conectadas.
 
 ---
-## Infraestrutura Final (Contabo)
 
-| Subdomínio | Porta | Serviço | Status |
-|-----------|-------|---------|--------|
-| http://logseq.estudiohc.dns | 5053 | Logseq (memória/diário) | ✅ |
-| http://joplin.estudiohc.dns | 5054 | Joplin (notas/tarefas) | ✅ |
-| http://vikunja.estudiohc.dns | 5055 | Vikunja (projetos) | ✅ |
-| http://ghost.estudiohc.dns | 5056 | Ghost (blog) | ✅ |
-| http://todo.estudiohc.dns | 5057 | MS To Do sync | ✅ |
+## Estações Tailscale Gerenciadas (Nós)
 
-## Como Acessar (Tailscale)
-100.64.117.78 logseq.estudiohc.dns joplin.estudiohc.dns vikunja.estudiohc.dns ghost.estudiohc.dns todo.estudiohc.dns
+| Estação | IP Tailscale | Sistema | Papel |
+| :--- | :---: | :---: | :--- |
+| **vmi2968998 (Contabo)** | `100.64.117.78` | Linux | **Hub Central 24/7 (Principal)** |
+| **estudiohc (Local 32GB)** | `100.107.208.50` | Linux | **Laboratório Dev / Reserva Imediata** |
+| **win-x99** | `100.81.219.127` | Windows | Estação Dev / Obsidian Coletor Local / OMP |
+| **linux-i5** | `100.71.137.21` | Linux | Estação Dev / Obsidian Coletor Local / Agy |
 
-## Stack Completo — Secretário Digital
-- 5 serviços rodando em Docker no Contabo
-- Traefik reverse proxy com subdomínios
-- PC local zero — tudo no servidor
-- Quando PC desligar: Contabo mantém tudo
+---
+
+## Como Acessar via Tailscale
+
+```bash
+# Apontamento Canônico Universal (hosts):
+100.64.117.78 hub.estudiohc
+
+# Healthcheck da API (HTTPS):
+curl -sk https://hub.estudiohc:5050/api/status
+
+# Endpoint MCP SSE para Agentes:
+http://hub.estudiohc:5051/sse
+```
+
+---
+
+## Licença
+MIT — Helcio O. Costa

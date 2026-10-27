@@ -1,142 +1,87 @@
 # 🧠 HANDOFF — EstudioHC Memory Suite (Secretário Digital)
 
-> **Para a próxima estação/agente dar continuidade.** Última atualização: 2026-10-26.
-> Repo: `/home/deploy/Apps/EstudioHC-Memory-Suite` (branch `master` → GitHub `helciocosta/EstudioHC-Memory-Suite`).
-> Leia também `STATUS_ESTUDIOHC.md`, `README.md` e o plano de implementação em `docs/superpowers/plans/2026-10-26-orquestrador-central-failover-contingencia.md`.
+> **Documento de Continuidade Operacional para Equipes e Agentes de Engenharia.**  
+> **Última Atualização:** 2026-10-27 | **Versão:** 4.6.0  
+> **Repositório:** `https://github.com/helciocosta/EstudioHC-Memory-Suite` (branch `master`)  
+> **Leituras Obrigatórias Complementares:** `README.md`, `STATUS_ESTUDIOHC.md` e o plano em `docs/superpowers/plans/2026-10-26-orquestrador-central-failover-contingencia.md`.
 
-## 1. O que é
+---
 
-Cérebro centralizado de IA/produtividade: memória permanente (LTM), working memory (WM),
-tarefas, agenda, notas, projetos, documentos (vetorial) — acessível via Tailscale de qualquer estação
-(computadores e futuramente celulares). IA primária: **OpenCode**; IA secundária: **Hermes** (OpenRouter);
-inferência local llama.cpp em cada estação.
+## 1. Visão Geral da Arquitetura
 
-## 2. Arquitetura REAL (verificada) — serviços systemd
+O **EstudioHC Memory Suite** é o nó central de persistência cognitiva e inteligência da rede Tailscale. Ele unifica:
+* **Memória Permanente (LTM):** SQLite mestre (`data/estudiohc.db`) com versionamento, reconciliação de fatos e linhagem (`superseded_by`).
+* **Working Memory (WM):** Armazenamento volátil com persistência em disco (`src/.working_memory.json`).
+* **Documentos Vetoriais:** ChromaDB isolado por coleções de projeto (`docs_<project>`).
+* **Busca Híbrida Inteligente:** Fusão por Postos Recíprocos (RRF) combinando vetores FAISS (`all-MiniLM-L6-v2`), sobreposição léxica BM25 e frescor temporal.
+* **Coding Chain Store:** Rastreamento de diffs de código (`data/coding_memory_cv.db`) com custo zero de LLM.
+* **Bridge de Integradores:** Sync Connect mapeando Logseq, Joplin, Vikunja, Ghost e Obsidian Agenda.
 
-| Serviço | Porta | Função | Status |
+---
+
+## 2. Inventário de Serviços Systemd em Produção
+
+| Serviço | Porta / Protocolo | Função | Verificação de Saúde |
 |---|---|---|---|
-| `estudiohc-api` | 5050 (HTTPS/SSL) | FastAPI central, auth X-API-Key, rate limit | ✅ ativo |
-| `estudiohc-dashboard` | 8585 | UI web (consome a API) | ✅ ativo |
-| `estudiohc-mcp-sse` | 5051 | MCP SSE (12 tools) — via para agentes remotos | ✅ ativo |
-| `estudiohc-sync-connect` | 5052 | Bridge integradores (7 rotas) | ✅ ativo |
-| `chromadb-mcp` | 8765 | ChromaDB MCP Server SSE (document layer) | ✅ ativo |
-| `estudiohc-alerts-contabo` | — | timer (19:34) health checks | ⏱ timer |
-| `estudiohc-monitor` | — | timer (5min) coleta métricas | ⏱ timer |
-| `estudiohc-backup` | — | timer (00:01) backup SQLite+FAISS | ⏱ timer |
+| `estudiohc-api` | `5050` (HTTPS/TLS) | FastAPI central, auth `X-API-Key`, CRUD de entidades | `curl -sk https://127.0.0.1:5050/api/status` |
+| `estudiohc-mcp-sse` | `5051` (HTTP/SSE) | Servidor MCP SSE com 14 ferramentas | `curl -s http://127.0.0.1:5051/sse` |
+| `chromadb-mcp` | `8765` (HTTP/SSE) | Servidor MCP SSE para busca em documentos inteiros | `curl -s http://127.0.0.1:8765/sse` |
+| `estudiohc-sync-connect` | `5052` (HTTP) | Bridge integrador para 7 serviços externos | `curl -s http://127.0.0.1:5052/health` |
+| `estudiohc-dashboard` | `8585` (HTTP) | Interface web operacional de gestão | `curl -s http://127.0.0.1:8585/` |
+| `estudiohc-monitor` | Timer (5 min) | Coleta de métricas e status | `systemctl list-timers estudiohc-monitor` |
+| `estudiohc-backup` | Timer (00:01) | Snapshot e backup do SQLite WAL + FAISS | `systemctl list-timers estudiohc-backup` |
 
-**Bancos**: `data/estudiohc.db` (SQLite, 175+ memórias, 25 projetos, 12 estações) é o REAL.
-`server/estudiohc_memory.db` e `server/memory.db` são LEGADOS — não usar.
+---
 
-## 3. Correções de produção — Fase 1 (2026-08-25, commits `6c48e58`, `d8a5fde`, `af055db`)
+## 3. Bancos de Dados Reais vs Legados
 
-### 3.1 Sync-Connect corrigido (bug: chave auto-sync inexistente + schemas errados)
-- Antes: systemd `Environment=API_KEY=auto-sync` → 401 em todo sync; rotas chamavam endpoints
-  errados (`/api/diarios` POST inexistente; `conteudo` vs `texto`).
-- Agora: drop-in systemd `/etc/systemd/system/estudiohc-sync-connect.service.d/override-api-key.conf`
-  com a API_KEY real (64 chars). `apps/sync-connect/main.py` reescrito mapeando os schemas REAIS:
-  - `/sync/logseq/diario` → `POST /api/nota` `{texto, estacao}`
-  - `/sync/joplin/nota` → `POST /api/nota`
-  - `/sync/joplin/tarefa` + `/sync/todo/tarefa` → `POST /api/tarefas` (resolve `projeto_id`, cria projeto "geral" se ausente)
-  - `/sync/vikunja/projeto` → `POST /api/projetos/sync` `{projetos:[...]}`
-  - `/sync/ghost/relatorio` → persistido como **nota** (NÃO usa `/gerar-relatorio` que roda IA e trava)
-  - `/sync/agenda` → `POST /api/agenda` `{eventos:[...]}`
-- Validado: todos os integradores retornam 200/201 em produção.
+* ✅ **BANCO ATIVO E VERDADEIRO:** `data/estudiohc.db` (SQLite em modo WAL com tabelas `agent_memory`, `notas`, `tarefas`, `agenda`, `projetos`, `estacoes`).
+* ✅ **BANCO DE DIFFS DE CÓDIGO:** `data/coding_memory_cv.db` (tabelas `coding_thread` e `coding_round`).
+* ❌ **BANCOS LEGADOS (NÃO UTILIZAR):** `server/estudiohc_memory.db` e `server/memory.db`.
 
-### 3.2 FAISS / busca vetorial corrigida (bug: modelo não carregava)
-- Antes: `SentenceTransformer` sem cache_folder → tentava download (HF) → timeout 30s → "Vector search disabled".
-- Agora: `apps/mcp-memory/src/embedder.py` usa `cache_folder=/home/deploy/.cache/huggingface/hub`
-  + `local_files_only=True` (com fallback online). Modelo `all-MiniLM-L6-v2` já em cache.
-- Resultado: `[memory] FAISS index rebuilt: 45 vectors` no startup. Índice em `src/.faiss_index.json`.
-- ⚠️ NÃO adicionar `HF_HUB_OFFLINE=1` no systemd (conflita com `local_files_only`; causa `LocalEntryNotFoundError`).
+---
 
-### 3.3 Working Memory persistente (bug: volátil)
-- Antes: `wm = WorkingMemory()` lista em RAM — perdida em restart.
-- Agora: `apps/mcp-memory/src/memory_server_sse.py` persiste em `src/.working_memory.json`
-  (load no `__init__`, save em push/pop/clear/consolidate). Validado: wm_push → restart → wm_list mantém.
+## 4. Evoluções Recentes de Produção (Versão 4.6.0)
 
-### 3.4 Sanitização de dados (bug: nomes sujos)
-- `apps/api/src/routers/memory.py`: `agent_name/project/category` com `.strip()` em `/memory/remember`.
-- 14 registros existentes corrigidos no banco. Validado com memória id 154.
+### 4.1 Busca Híbrida RRF (Reciprocal Rank Fusion)
+* Arquivo: `apps/mcp-memory/src/rrf.py`
+* Substituiu a soma ingênua de scores pelo algoritmo oficial do Tencent Hy-Memory (Cormack et al., 2009).
+* A ferramenta `search_memory` avalia 3 canais simultâneos (`vec` ponderado 1.2, `kw` ponderado 1.0, `recency` ponderado 0.4) com constante $k=60$.
 
-## 4. Autenticação (como funciona)
+### 4.2 Reconciliação e Versionamento na Tabela `agent_memory`
+* Colunas adicionadas: `status` (`active` | `superseded`), `version` (inteiro incremental) e `superseded_by` (chave estrangeira autorreferencial).
+* `POST /remember` com `supersedes_id` marca a memória anterior como `superseded` e gera nova versão.
+* `GET /recall/{project}` filtra por padrão apenas registros `status='active'`, evitando que decisões técnicas obsoletas gerem alucinações nos agentes.
 
-- `get_current_estacao`: `X-API-Key` = API_KEY global → scope `master`; OU chave de estação (hash) → scope `estacao`.
-- `require_master` para rotas administrativas.
-- API: env `apps/api/.env` (`API_KEY`, `MEMORY_API_KEY`). MCP read da mesma env via EnvironmentFile do systemd.
-- Rotas abertas (sem auth): `/api/status` (healthcheck). Todo o resto exige key.
+### 4.3 Coding Chain Store
+* Arquivo: `apps/mcp-memory/src/coding_chain.py`
+* Ferramentas MCP expostas: `code_record_change` e `code_get_history`.
+* Permite que agentes OMP, OpenCode e Jarvis gravem o histórico exato de diffs aplicados no repositório.
 
-## 5. Como dar continuidade (Fase 2+)
+---
 
-Próximos passos priorizados (sem pressa, com aprovação):
+## 5. Procedimento de Contingência e Failover
 
-1. **Backup distribuído**: servidor `estudiohc` (100.107.208.50) será o espelho/backup quando
-   estiver online. Configurar rsync/restic do `data/estudiohc.db` + `.env` + `chroma_data`.
-2. **Teste de restore**: restaurar `backups/memory-db.*` em outro path e validar integridade SQLite.
-3. **Migração SQLite → Postgres** quando >1 estação escrever simultaneamente (concorrência).
-4. **Chave por estação**: criar chaves de estação dedicadas (hash) para celulares/dispositivos,
-   em vez de todos usarem a master. Endpoint `/api/estacoes` + `EstacaoRegistro`.
-5. **Dashboard hardcoded paths**: `apps/dashboard/static/*.html` usam `API` fixo — parametrizar por env.
-6. **Rota `/docs` (Swagger)**: retorna 404 — reabilitar ou remover da doc.
-7. **`gerar-relatorio`** gera IA e trava (lento) — tornar assíncrono/opcional.
-8. **Camada docs ChromaDB**: validar `doc_add/search` end-to-end (rota 8765 ativa).
+Se a VPS Contabo (`100.64.117.78`) estiver indisponível:
+1. Ligar o **Servidor Local EstudioHC** (`100.107.208.50`).
+2. O servidor local sobe os 5 serviços systemd automaticamente no boot.
+3. No Windows ou Linux, executar o script de comutação de DNS canônico:
+   ```cmd
+   C:\Users\helcio\scripts\switch-to-local.cmd
+   ```
+   Isso altera a resolução de `hub.estudiohc` no arquivo `hosts` para `100.107.208.50`.
+4. Todos os agentes (OMP, OpenCode, Obsidian) são redirecionados instantaneamente sem reconfiguração de portas ou chaves.
+5. Quando a VPS retornar:
+   - Executar o script de failback reverso para replicar os deltas de SQLite via WAL/rsync.
+   - Executar `switch-to-contabo.cmd` e desligar o Servidor Local para retorno ao consumo zero de energia.
 
-## 6. Erros conhecidos / armadilhas
+---
 
-- **MCP `/mcp` path dá `TypeError: NoneType not callable`** (404 no log) — o caminho REAL é `/sse`.
-  Ignorar 404 de `/mcp`; não "corrigir" mexendo no routing sem testar o SSE.
-- **`gerar-relatorio`** da API pode travar (chama IA) — não usar em sync; timeout 40s+.
-- **Não editar `apps/`** (minúscula) — não existe mais; tudo em `Apps/`.
-- **Backup diário existe mas RESTORE NÃO TESTADO** — testar antes de confiar.
-- **Repos em branch `master`** (Memory-Suite) e `main` (server-setup): cada um no seu.
+## 6. Cuidados e Armadilhas Conhecidas (Pitfalls)
 
-## 7. Comandos úteis
-
-```bash
-# health API (https)
-curl -sk https://127.0.0.1:5050/api/status
-# tools MCP (via cliente)
-cd apps/mcp-memory && .venv/bin/python - <<EOF
-import asyncio
-from mcp import ClientSession
-from mcp.client.sse import sse_client
-async def m():
-    async with sse_client("http://127.0.0.1:5051/sse") as (r, w):
-        async with ClientSession(r, w) as s:
-            await s.initialize()
-            print((await s.list_tools()).tools)
-asyncio.run(m())
-EOF
-# testes API
-cd apps/api && K=$(grep -m1 "^API_KEY=" .env|cut -d= -f2)
-curl -sk -H "X-API-Key: $K" https://127.0.0.1:5050/memory/remember -X POST -d "{\"agent_name\":\"x\",\"project\":\"x\",\"category\":\"fact\",\"content\":\"teste\"}" -H "Content-Type: application/json"
-# sync teste
-curl -s -X POST http://127.0.0.1:5052/sync/joplin/nota -H "Content-Type: application/json" -d "{\"titulo\":\"t\",\"conteudo\":\"c\"}"
-```
-
-## 8. Estado do banco (2026-10-26)
-
-- `agent_memory`: 175+ memórias reais (com escritas ativas por `omp`, `opencode` e `Antigravity`).
-- Projetos: 25; Estações: 12 (nós Tailscale legítimos — NÃO remover).
-- Distribuição: EstudioHC 53, opencode 45, CGDOC 24; agentes: opencode 61, Antigravity 30, Dashboard_Terminal 21, omp ativo.
-
-## 9. Atualização Arquitetural e Plano de Continuidade (2026-10-26)
-
-> **Referência Obrigatória:** Ver plano detalhado em `docs/superpowers/plans/2026-10-26-orquestrador-central-failover-contingencia.md`.
-
-### 9.1 Papéis Canônicos dos Servidores e Economia de Energia
-- **Hub Central 24/7 (VPS Contabo `100.64.117.78`)**: Servidor principal absoluto. Executa 24 horas por dia os 5 serviços systemd (`estudiohc-api` :5050 HTTPS, `estudiohc-mcp-sse` :5051 SSE, `chromadb-mcp` :8765 SSE, `estudiohc-sync-connect` :5052, `estudiohc-dashboard` :8585) e mantém o SQLite mestre (`data/estudiohc.db`).
-- **Laboratório Sob Demanda & Reserva Imediata (Servidor Local 32GB `100.107.208.50`)**: Para economia de energia residencial, é ligado apenas poucas horas durante sessões de desenvolvimento e processamento pesado (Ollama local, treinos, embeddings). Opera como servidor de contingência imediata: se a VPS Contabo falhar, ao ser ligado assume imediatamente 100% da stack e rede via DNS canônico `hub.estudiohc`.
-- **Failback Reverso**: Antes de desligar o servidor local ou retornar a produção para o Contabo, os deltas criados durante a contingência são reconciliados de volta na VPS via REST sem perda de dados.
-
-### 9.2 Obsidian como Coletor Local Ativo e Gestão de Agendas
-- As estações desktop (`win-x99` e `linux-i5`) utilizam seus cofres Obsidian (`01 - Notas` e `02 - Diário`) como coletores locais ativos de dados, telemetria (ActivityWatch + Git commits) e notas de inteligência.
-- As agendas locais das estações (`00 - Painel/Agenda.md` e diários) são sincronizadas bidirecionalmente com a API central (`POST /api/agenda` e `GET /api/agenda`).
-- Uma bridge local de ingestão monitora arquivos `.md` e os replica via REST (`POST /api/nota`) e ChromaDB (`doc_add`).
-
-### 9.3 Rastreamento Automático no Git (Task Lifecycle Ledger)
-- Qualquer equipe ou agente que assumir o projeto deve manter o controle automático do ciclo de vida das tarefas no repositório GitHub:
-  - **Início**: Atualizar ledger para `[IN_PROGRESS]` com commit e push.
-  - **Progresso**: Commits atômicos documentando marcos intermediários.
-  - **Finalização**: Validação com testes de fumaça, marcação como `[COMPLETED]` e push para `master`.
-
-*Documento mantido no repo. Próxima estação: siga este handoff + STATUS_ESTUDIOHC.md.*
+1. **FAISS em Cache Local:**
+   - O arquivo `apps/mcp-memory/src/embedder.py` utiliza `local_files_only=True` com fallback dinâmico. O modelo `all-MiniLM-L6-v2` deve estar no cache Hugging Face (`~/.cache/huggingface/hub`). **NUNCA** adicionar `HF_HUB_OFFLINE=1` nas unidades systemd, pois isso causa falha de carregamento (`LocalEntryNotFoundError`).
+2. **FastAPI Booleanos em Chamadas Internas:**
+   - Em `apps/api/src/routers/memory.py`, se um endpoint aceitar parâmetros com `Query(False)` e for chamado diretamente por funções internas de `main.py`, o valor padrão recebido será a instância do objeto `Query` (que em Python avalia para `True`). Mantenha os defaults de funções internas como booleanos literais (`include_superseded: bool = False`).
+3. **Certificados TLS:**
+   - A API na porta `5050` roda estritamente sob HTTPS. Requisições em plain HTTP retornam `Empty reply from server (code 52)`. Use sempre `curl -k` ou HTTPS.

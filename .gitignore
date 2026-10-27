@@ -56,7 +56,7 @@ backups/
 .estudio_cache/
 
 # Model binaries (GGUF)
-models/
+/models/
 # backups
 *.bak.*
 *~
@@ -68,3 +68,4 @@ models/
 # estado runtime e backups de auditoria
 .working_memory.json
 *.bak_audit*
+.faiss_index.json

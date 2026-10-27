@@ -1,7 +1,5 @@
 from sqlalchemy import Column, Integer, String, Text
-
 from ..database import Base
-
 
 class AgentMemory(Base):
     __tablename__ = "agent_memory"
@@ -13,3 +11,6 @@ class AgentMemory(Base):
     category = Column(String(64), default="task")
     content = Column(Text)
     estacao = Column(String(128), default=None, nullable=True)
+    status = Column(String(32), default="active")
+    version = Column(Integer, default=1)
+    superseded_by = Column(Integer, default=None, nullable=True)

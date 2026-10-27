@@ -19,6 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from summarizer import summarize as llm_summarize
 import embedder as vec_store
 import chroma_client as chroma
+from rrf import rrf_fuse
+import coding_chain
 
 # ─── Config ──────────────────────────────────────────────────────────────
 MEMORY_API_URL = os.getenv("MEMORY_API_URL", "https://127.0.0.1:5050")
@@ -196,12 +198,29 @@ async def list_tools() -> list[Tool]:
                  "category": {"type": "string", "description": "Optional category to consolidate"},
              }}),
         # Long-term Memory (via API)
-        Tool(name="add_memory", description="Add a long-term memory entry (persists to central API)",
+        Tool(name="add_memory", description="Add a long-term memory entry with optional supersede versioning (persists to central API)",
              inputSchema={"type": "object", "properties": {
                  "content": {"type": "string", "description": "Memory content"},
                  "project": {"type": "string", "description": "Project name", "default": "opencode"},
                  "category": {"type": "string", "description": "Category", "default": "context"},
+                 "supersedes_id": {"type": "integer", "description": "Optional ID of previous memory this entry supersedes"},
              }, "required": ["content"]}),
+        Tool(name="code_record_change", description="Record a code modification in the version-evolution chain (Diff-Chain, zero LLM cost)",
+             inputSchema={"type": "object", "properties": {
+                 "workspace": {"type": "string", "description": "Project or repository identifier"},
+                 "branch": {"type": "string", "description": "Git branch name", "default": "main"},
+                 "file": {"type": "string", "description": "File path modified"},
+                 "said": {"type": "string", "description": "User instruction or reason for the modification"},
+                 "patch": {"type": "string", "description": "Git diff or modification patch text"},
+                 "symbol": {"type": "string", "description": "Function, class or symbol name (optional)"},
+             }, "required": ["workspace", "file", "said", "patch"]}),
+        Tool(name="code_get_history", description="Retrieve code version evolution chain and diffs for a file or workspace",
+             inputSchema={"type": "object", "properties": {
+                 "workspace": {"type": "string", "description": "Project or repository identifier"},
+                 "file": {"type": "string", "description": "Optional file path filter"},
+                 "branch": {"type": "string", "description": "Optional branch filter"},
+                 "limit": {"type": "integer", "description": "Max rounds to retrieve", "default": 5},
+             }, "required": ["workspace"]}),
         Tool(name="search_memory", description="Search long-term memories (hybrid: recency + keyword + FAISS)",
              inputSchema={"type": "object", "properties": {
                  "query": {"type": "string", "description": "Search query"},
@@ -282,32 +301,107 @@ async def handle_call_tool(name: str, arguments: dict | None):
         # ─── Long-term Memory (API) ─────────────────────────────────────
         elif name == "add_memory":
             project = _validar_project(arguments.get("project", "opencode"))
-            await call_api("POST", "/remember", {
+            payload = {
                 "agent_name": AGENT_NAME,
                 "project": project,
                 "category": arguments.get("category", "context"),
                 "content": arguments["content"],
-            })
-            return [TextContent(type="text", text=f"Memory added to [{project}].")]
+            }
+            if arguments.get("supersedes_id"):
+                payload["supersedes_id"] = arguments["supersedes_id"]
+            res = await call_api("POST", "/remember", payload)
+            ver = res.get("version", 1) if isinstance(res, dict) else 1
+            return [TextContent(type="text", text=f"Memory v{ver} added to [{project}] (id: {res.get('id')}).")]
         elif name == "search_memory":
             project = _validar_project(arguments.get("project", "opencode"))
             query = arguments["query"]
             limit = min(arguments.get("limit", 10), 50)
             category = arguments.get("category", "")
-            data = await call_api("GET", f"/recall/{project}?limit={limit * 3}")
+            data = await call_api("GET", f"/recall/{project}?limit={limit * 5}")
             if not data:
                 return [TextContent(type="text", text=f"No memories in [{project}].")]
-            scored = [(m, score_memory(m, query, category)) for m in data]
-            scored.sort(key=lambda x: x[1], reverse=True)
-            top = scored[:limit]
+            
+            # Canal 1: Léxico / BM25
+            def calc_kw(m):
+                txt = extract_text(m).lower()
+                q_terms = set(query.lower().split())
+                if not q_terms:
+                    return 0.0
+                t_terms = set(txt.split())
+                cat = m.get("category", "")
+                cat_bonus = 0.2 if category and cat == category else 0.0
+                return (len(q_terms & t_terms) / len(q_terms)) + cat_bonus
+
+            kw_candidates = sorted(data, key=calc_kw, reverse=True)
+
+            # Canal 2: Vetorial (FAISS)
+            vec_candidates = []
+            try:
+                vec_hits = await asyncio.to_thread(vec_store.search, query, min(limit * 3, 50))
+                data_map = {str(m.get("id")): m for m in data}
+                for mid, _ in vec_hits:
+                    raw_id = mid.split("|")[0] if "|" in mid else mid
+                    if raw_id in data_map:
+                        vec_candidates.append(data_map[raw_id])
+            except Exception:
+                pass
+
+            # Canal 3: Temporal (Recência)
+            recency_candidates = sorted(data, key=lambda m: m.get("timestamp", ""), reverse=True)
+
+            # Fusão RRF (Reciprocal Rank Fusion - Tencent Hy-Memory)
+            fused = rrf_fuse(
+                {
+                    "vec": vec_candidates,
+                    "kw": kw_candidates,
+                    "recency": recency_candidates,
+                },
+                weights={"vec": 1.2, "kw": 1.0, "recency": 0.4},
+                k=HYBRID_RRF_K,
+                id_key="id"
+            )
+
+            top = fused[:limit]
             if not top:
                 return [TextContent(type="text", text="No matching memories.")]
-            lines = [f"--- Top {len(top)} memories for '{query}' in [{project}] ---"]
-            for m, sc in top:
+            lines = [f"--- Top {len(top)} memories for '{query}' in [{project}] (RRF Hybrid Fusion) ---"]
+            for f_entry in top:
+                m = f_entry["item"]
+                sc = f_entry["rrf_score"]
+                channels = ",".join(f_entry["channels_hit"])
                 cat = m.get("category", "")
                 ts = m.get("timestamp", "")
+                ver = m.get("version", 1)
                 txt = extract_text(m)[:200].replace("\n", " ")
-                lines.append(f"[{ts}] ({cat}) score={sc:.3f} {txt}")
+                lines.append(f"[{ts}] (v{ver}|{cat}) RRF={sc:.4f} [{channels}] {txt}")
+            return [TextContent(type="text", text="\n".join(lines))]
+        elif name == "code_record_change":
+            rec = await asyncio.to_thread(
+                coding_chain.record_change,
+                workspace=arguments["workspace"],
+                branch=arguments.get("branch", "main"),
+                file=arguments["file"],
+                said=arguments["said"],
+                patch=arguments["patch"],
+                symbol=arguments.get("symbol"),
+            )
+            return [TextContent(type="text", text=f"Recorded version v{rec['seq']} for {rec['file']} ({rec['adds']} additions) in [{rec['workspace']}].")]
+        elif name == "code_get_history":
+            chain = await asyncio.to_thread(
+                coding_chain.get_evolution_chain,
+                workspace=arguments["workspace"],
+                branch=arguments.get("branch"),
+                file=arguments.get("file"),
+                limit=arguments.get("limit", 5),
+            )
+            if not chain:
+                return [TextContent(type="text", text=f"No code evolution history in [{arguments['workspace']}].")]
+            lines = [f"--- Code Evolution Chain for [{arguments['workspace']}] ({len(chain)} rounds) ---"]
+            for r in chain:
+                lines.append(f"• v{r['seq']} [{r['branch']}] {r['file']} @ {r['timestamp']}")
+                lines.append(f"  Motivo: {r['said']}")
+                patch_preview = r['patch'][:250].replace(chr(10), ' ')
+                lines.append(f"  Patch: {patch_preview}...")
             return [TextContent(type="text", text="\n".join(lines))]
         elif name == "get_status":
             project = _validar_project(arguments.get("project", "opencode"))

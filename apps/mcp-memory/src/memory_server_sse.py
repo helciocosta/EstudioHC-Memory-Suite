@@ -12,6 +12,7 @@ from mcp.types import Tool, TextContent
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route
+from starlette.responses import JSONResponse
 import uvicorn
 
 # Local imports
@@ -311,7 +312,13 @@ async def handle_call_tool(name: str, arguments: dict | None):
                 payload["supersedes_id"] = arguments["supersedes_id"]
             res = await call_api("POST", "/remember", payload)
             ver = res.get("version", 1) if isinstance(res, dict) else 1
-            return [TextContent(type="text", text=f"Memory v{ver} added to [{project}] (id: {res.get('id')}).")]
+            mem_id = res.get("id") if isinstance(res, dict) else None
+            if mem_id:
+                try:
+                    await asyncio.to_thread(vec_store.add, extract_text(payload), f"{mem_id}|{payload['category']}")
+                except Exception:
+                    pass
+            return [TextContent(type="text", text=f"Memory v{ver} added to [{project}] (id: {mem_id}).")]
         elif name == "search_memory":
             project = _validar_project(arguments.get("project", "opencode"))
             query = arguments["query"]
@@ -493,30 +500,65 @@ async def handle_messages(scope, receive, send):
     # registrado como app ASGI cru (Mount), nao como endpoint HTTP.
     await sse.handle_post_message(scope, receive, send)
 
+async def handle_index_doc(request):
+    api_key = request.headers.get("X-API-Key", "")
+    if MEMORY_API_KEY and api_key != MEMORY_API_KEY:
+        # Valida tambem se eh chave de estacao via API central
+        try:
+            async with httpx.AsyncClient(base_url=MEMORY_API_URL, timeout=5.0, verify=False) as client:
+                r = await client.get("/api/estacoes", headers={"X-API-Key": api_key})
+                if r.status_code != 200:
+                    return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        except Exception:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    try:
+        body = await request.json()
+        project = _validar_project(body.get("project", "obsidian"))
+        title = body.get("title", "nota")
+        content = body.get("content", "")
+        tags = body.get("tags", [])
+        doc_id = body.get("doc_id")
+        info = await chroma.doc_add(project, title, content, tags, doc_id=doc_id)
+        mem_id = body.get("memory_id")
+        cat = body.get("category", "obsidian_note")
+        if mem_id:
+            try:
+                await asyncio.to_thread(vec_store.add, content, f"{mem_id}|{cat}")
+            except Exception:
+                pass
+        return JSONResponse({"ok": True, "chroma": info})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
 app = Starlette(debug=False, routes=[
     Route("/sse", endpoint=handle_sse),
+    Route("/api/index-doc", endpoint=handle_index_doc, methods=["POST"]),
     Mount("/messages/", app=handle_messages),
 ])
 
 # ─── Startup: rebuild FAISS index ───────────────────────────────────────
 async def rebuild_vector_index():
     try:
-        result = await call_api("GET", "/recall/opencode?limit=200")
-        if result:
-            texts = []
-            for m in result:
-                mid = f"{m.get('id', '')}|{m.get('category', '')}"
-                text = extract_text(m)
-                if text:
-                    texts.append((mid, text))
-            if texts:
-                await asyncio.to_thread(vec_store.rebuild, texts)
-                vs = vec_store.status()
-                print(f"[memory] FAISS index rebuilt: {vs['index_size']} vectors", file=sys.stderr)
+        texts = []
+        for proj in ("opencode", "EstudioHC", "obsidian"):
+            try:
+                result = await call_api("GET", f"/recall/{proj}?limit=200")
+                if result:
+                    for m in result:
+                        mid = f"{m.get('id', '')}|{m.get('category', '')}"
+                        text = extract_text(m)
+                        if text:
+                            texts.append((mid, text))
+            except Exception:
+                pass
+        if texts:
+            await asyncio.to_thread(vec_store.rebuild, texts)
+            vs = vec_store.status()
+            print(f"[memory] FAISS index rebuilt: {vs['index_size']} vectors", file=sys.stderr)
     except Exception as e:
-        print(f"[memory] FAISS rebuild skipped: {e} — vector search disabled. Memory API still works.", file=sys.stderr)
+        print(f"[memory] FAISS rebuild skipped: {e} ? vector search disabled. Memory API still works.", file=sys.stderr)
 
-# ─── Entry Point ────────────────────────────────────────────────────────
+# ??? Entry Point ????????????????????????????????????????????????????????
 if __name__ == "__main__":
     import asyncio
     # Run index rebuild before starting server

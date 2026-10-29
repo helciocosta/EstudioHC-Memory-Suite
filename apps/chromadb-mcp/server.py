@@ -158,7 +158,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
             ids = [d.get("id") or str(uuid.uuid5(uuid.NAMESPACE_URL, f"{arguments['collection']}:{d['text'][:200]}")) for d in docs]
             texts = [d["text"] for d in docs]
             metas = [d.get("metadata", {}) for d in docs]
-            col.add(documents=texts, ids=ids, metadatas=metas)
+            col.upsert(documents=texts, ids=ids, metadatas=metas)
             return CallToolResult(content=[TextContent(type="text",
                 text=json.dumps({"added": len(docs), "ids": ids}))])
 

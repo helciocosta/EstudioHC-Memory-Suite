@@ -98,8 +98,13 @@ async def save_nota(
     identity: Identity = Depends(get_current_estacao),
     db: AsyncSession = Depends(get_db),
 ):
+    estacao_efetiva = (
+        payload.estacao.strip()
+        if (identity.scope == "master" and payload.estacao and payload.estacao.strip() not in ("", "desconhecida"))
+        else identity.estacao
+    )
     nota = Nota(
-        estacao=identity.estacao,
+        estacao=estacao_efetiva,
         texto=payload.texto,
         timestamp=datetime.now().isoformat(),
     )

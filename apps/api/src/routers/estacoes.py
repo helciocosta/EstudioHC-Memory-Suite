@@ -1,13 +1,13 @@
 import secrets
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..models.estacoes import Estacao
-from ..schemas import EstacaoRegistro
+from ..schemas import EstacaoPing, EstacaoRegistro
 from ..security import Identity, get_current_estacao, require_master, rate_limiter, station_key_hash
 
 router = APIRouter(prefix="/api/estacoes", tags=["Estações"])
@@ -36,11 +36,20 @@ async def registrar_estacao(
 @router.post("/ping")
 async def estacao_ping(
     request: Request,
+    payload: EstacaoPing | None = Body(default=None),
     identity: Identity = Depends(get_current_estacao),
     db: AsyncSession = Depends(get_db),
 ):
-    hostname = identity.estacao
-    ip = request.client.host if request.client else "desconhecido"
+    hostname = (
+        payload.hostname.strip()
+        if (identity.scope == "master" and payload and payload.hostname and payload.hostname.strip())
+        else identity.estacao
+    )
+    ip = (
+        payload.ip.strip()
+        if (payload and payload.ip and payload.ip.strip() not in ("", "desconhecido"))
+        else (request.client.host if request.client else "desconhecido")
+    )
     existing = await db.execute(select(Estacao).where(Estacao.hostname == hostname))
     row = existing.scalar_one_or_none()
     ts = datetime.now().isoformat()

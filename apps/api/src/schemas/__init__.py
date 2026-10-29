@@ -8,6 +8,7 @@ class MemoryEntry(BaseModel):
     content: str
     category: str = "task"
     supersedes_id: Optional[int] = None
+    estacao: Optional[str] = None
 
 
 class MemoryResponse(BaseModel):

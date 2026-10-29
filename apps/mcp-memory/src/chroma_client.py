@@ -89,10 +89,11 @@ async def ensure_collection(project: str) -> str:
     return name
 
 
-async def doc_add(project: str, title: str, content: str, tags: list | None = None) -> dict:
+async def doc_add(project: str, title: str, content: str, tags: list | None = None, doc_id: str | None = None) -> dict:
     name = await ensure_collection(project)
     now = datetime.now(timezone.utc)
-    doc_id = f"{_slugify(title)}_{now.strftime('%Y%m%d%H%M%S')}"
+    if not doc_id:
+        doc_id = f"{_slugify(title)}_{now.strftime('%Y%m%d%H%M%S')}"
     tags_str = ",".join(tags) if tags else ""
     metadata = {
         "title": title,

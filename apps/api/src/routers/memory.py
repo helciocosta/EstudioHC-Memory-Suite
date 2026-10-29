@@ -30,10 +30,15 @@ async def save_memory(
             old_mem.status = "superseded"
             target_version = (old_mem.version or 1) + 1
 
+    estacao_efetiva = (
+        entry.estacao.strip()
+        if (identity.scope == "master" and getattr(entry, "estacao", None) and entry.estacao.strip() not in ("", "desconhecida"))
+        else identity.estacao
+    )
     mem = AgentMemory(
         timestamp=datetime.now().isoformat(),
         agent_name=entry.agent_name.strip(),
-        estacao=identity.estacao,
+        estacao=estacao_efetiva,
         project=entry.project.strip(),
         category=entry.category.strip(),
         content=entry.content,

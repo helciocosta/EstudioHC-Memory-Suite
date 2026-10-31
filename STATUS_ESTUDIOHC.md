@@ -1,10 +1,10 @@
 # ?? EstudioHC ? Status do Projeto Central
 
-**?ltima atualiza??o:** 2026-10-29  
+**?ltima atualiza??o:** 2026-10-30  
 **Maestro Prim?rio (24/7):** `vmi2968998` (`100.64.117.78` / `hub.estudiohc`)  
 **Servidor Local (R?plica & Failover):** `estudiohc` (`100.107.208.50`)  
-**Vers?o do stack:** v4.7.0 (`commit ba4a16d+`)
-
+**Vers?o do stack:** v4.7.1 (`commit 9531e69+` - Failover Autom?tico Windows)  
+**Failover Autom?tico Windows:** `scripts/failover_monitor.py` + tarefa agendada `EstudioHC-FailoverMonitor`
 ---
 
 ## ?? Meta Principal
@@ -49,6 +49,8 @@ EstudioHC-Memory-Suite/
 ?   ??? obsidian_collector.py         ? Coletor Local v2.0 (Tripla Ingest?o, Debounce 15s, Failover) ?
 ?   ??? agenda_sync.py                ? Sincronizador de Agenda v2.0 ?
 ?   ??? station_bootstrap_win.ps1     ? Bootstrap e Watchdog para Windows 11 ?
+?   ??? failover_monitor.py           ? Failover Autom?tico do Windows (hosts DNS) ?
+?   ??? start_failover_monitor.bat    ? Inicializador do Failover Monitor ?
 ?   ??? switch-to-contabo.cmd         ? Comutador DNS can?nico para Maestro Contabo ?
 ?   ??? switch-to-local.cmd           ? Comutador DNS can?nico para Failover Local ?
 ?   ??? replicate_to_local.sh         ? Replica??o quente SQLite WAL + ChromaDB (15 min) ?
